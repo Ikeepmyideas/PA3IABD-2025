@@ -1,6 +1,10 @@
 use ndarray::Array1;
+
 mod extract_features; 
 use extract_features::extract_features; 
+
+mod pmc;
+use pmc::PMC;
 
 fn sigmoid(x: f64) -> f64 {
     1.0 / (1.0 + (-x).exp())
@@ -20,18 +24,9 @@ fn log_loss(y_true: f64, y_pred: f64) -> f64 {
 }
 
 fn main() {
-    //let weights = Array1::from(vec![0.4, -0.4]);
-    //let bias = 0.1;
+    use ndarray::Array1;
 
-    // Données d'entrée (features) + labels réels
-    /*
-    let test_data = vec![
-        (Array1::from(vec![0.5, 1.2]), 1.0),  // A
-        (Array1::from(vec![0.3, -0.7]), 0.0), // pas A
-        (Array1::from(vec![1.0, 0.5]), 1.0),  //  A
-        (Array1::from(vec![-0.2, -1.0]), 0.0),// pas A
-    ];
-    */
+    // === Données d'apprentissage ===
     let test_data = vec![
         (Array1::from(vec![0.5, 1.2, 0.5f64.powi(2), 1.2f64.powi(2), 0.5 * 1.2]), 1.0),
         (Array1::from(vec![0.3, -0.7, 0.3f64.powi(2), (-0.7f64).powi(2), 0.3 * -0.7]), 0.0),
@@ -42,74 +37,72 @@ fn main() {
     let learning_rate = 0.1;
     let epochs = 100;
 
-    // poinds er biais 
-    //let mut weights = Array1::from(vec![0.0, 0.0]);
+    // === Entraînement du modèle linéaire ===
     let mut weights = Array1::from(vec![0.0; 5]);
-
     let mut bias = 0.0;
 
     for epoch in 0..epochs {
-        let mut total_loss = 0.0; // perte cumulée 
-
-        let mut gradient_w = Array1::zeros(weights.len()); 
+        let mut total_loss = 0.0;
+        let mut gradient_w: Array1<f64> = Array1::zeros(weights.len());
         let mut gradient_b = 0.0;
-        // prediction + calcule la perte + accumuler les gradients 
-        for(x,y_true) in &test_data{
-            let y_pred = predict(x,&weights, bias);
+
+        for (x, y_true) in &test_data {
+            let y_pred = predict(x, &weights, bias);
             let loss = log_loss(*y_true, y_pred);
             total_loss += loss;
 
-            let error = y_pred -y_true;
+            let error = y_pred - y_true;
             gradient_w = gradient_w + &(x * error);
-            gradient_b += error; 
+            gradient_b += error;
         }
-        // moyenne des gradients et mise a jour des poids 
+
         let n = test_data.len() as f64;
-        weights = &weights - &gradient_w.mapv(|g: f64| -> f64 { learning_rate * g / n });
+        weights = &weights - &gradient_w.mapv(|g| learning_rate * g / n);
         bias -= learning_rate * gradient_b / n;
         println!("Epoch {:3} | Loss moyenne : {:.5}", epoch + 1, total_loss / n);
     }
-    println!("\nPoids finaux : {:?}", weights);
-    println!("Biais final : {:.4}", bias);
 
-    println!("\n=== Prédictions finales sur les données ===");
-    /*
-    for (i, (x, y_true)) in test_data.iter().enumerate() {
-        let y_pred = predict(x, &weights, bias);
-        let prediction = if y_pred >= 0.5 { 1.0 } else { 0.0 }; // seuil de décision
-        let erreur = (y_true - y_pred).abs();
-        let loss = log_loss(*y_true, y_pred);
+    println!("\nPoids finaux (linéaire) : {:?}", weights);
+    println!("Biais final (linéaire)  : {:.4}", bias);
 
-        println!("Exemple {} :", i + 1);
-        println!("  Entrée         : {:?}", x);
-        println!("  Vraie classe   : {}", y_true);
-        println!("  Probabilité    : {:.4}", y_pred);
-        println!("  Prédiction     : {}", prediction);
-        println!("  Erreur absolue : {:.4}", erreur);
-        println!("  Log-loss       : {:.4}", loss);
-        println!();
-    }
-    */
+    // === Entraînement du PMC ===
+    let mut pmc = PMC::new(5, 3, 0.1);
+    let test_data_vec: Vec<(Vec<f64>, f64)> = test_data
+        .iter()
+        .map(|(x, y)| (x.to_vec(), *y))
+        .collect();
+    pmc.train(&test_data_vec, 100);
 
+    // === Test d'une image avec les deux modèles ===
     let image_path = "../dataset/train/B/B_001.jpg";
-    match extract_features(image_path){
-        Ok((white,aspect)) => {
-            //let x = Array1::from(vec![white, aspect]);
-            let x = Array1::from(vec![
+    match extract_features(image_path) {
+        Ok((white, aspect)) => {
+            let features_vec = vec![
                 white,
                 aspect,
                 white.powi(2),
                 aspect.powi(2),
-                white * aspect
-            ]);            
-            let y_pred = predict(&x, &weights, bias);
+                white * aspect,
+            ];
+            let features_array = Array1::from(features_vec.clone());
+
+            // Prédiction modèle linéaire
+            let y_pred_linear = predict(&features_array, &weights, bias);
+            println!("\n=== Prédiction modèle linéaire ===");
             println!("Image : {}", image_path);
             println!("  Ratio de pixels blancs : {:.4}", white);
             println!("  Aspect ratio            : {:.4}", aspect);
-            println!("  Probabilité classe 1    : {:.4}", y_pred);
-            println!("  Classe prédite          : {}", if y_pred >= 0.5 { 1 } else { 0 });
+            println!("  Probabilité classe 1    : {:.4}", y_pred_linear);
+            println!("  Classe prédite          : {}", if y_pred_linear >= 0.5 { 1 } else { 0 });
+
+            // Prédiction réseau PMC
+            let y_pred_pmc = pmc.predict(&features_vec);
+            println!("\n=== Prédiction réseau PMC ===");
+            println!("Image : {}", image_path);
+            println!("  Probabilité classe 1    : {:.4}", y_pred_pmc);
+            println!("  Classe prédite          : {}", if y_pred_pmc >= 0.5 { 1 } else { 0 });
         }
         Err(e) => println!("Erreur lors du traitement de l'image : {}", e),
     }
-   
-    }
+}
+

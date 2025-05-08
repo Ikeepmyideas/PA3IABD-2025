@@ -1,0 +1,1 @@
+C:\projet_annuel\PA3IABD-2025\signai\target\debug\signai-linear.exe: C:\projet_annuel\PA3IABD-2025\signai\src\extract_features.rs C:\projet_annuel\PA3IABD-2025\signai\src\main.rs C:\projet_annuel\PA3IABD-2025\signai\src\pmc.rs
