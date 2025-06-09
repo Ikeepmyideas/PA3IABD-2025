@@ -1,0 +1,12 @@
+C:\Users\akric\OneDrive - Reseau-GES\Documents\PROJET ANNUEL\PA\PA3IABD-2025\target\debug\deps\libgif-a49de8a5c6bf4e31.rmeta: C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\lib.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\traits.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\common.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\reader\mod.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\reader\decoder.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\reader\converter.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\encoder.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\../README.md
+
+C:\Users\akric\OneDrive - Reseau-GES\Documents\PROJET ANNUEL\PA\PA3IABD-2025\target\debug\deps\gif-a49de8a5c6bf4e31.d: C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\lib.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\traits.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\common.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\reader\mod.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\reader\decoder.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\reader\converter.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\encoder.rs C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\../README.md
+
+C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\lib.rs:
+C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\traits.rs:
+C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\common.rs:
+C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\reader\mod.rs:
+C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\reader\decoder.rs:
+C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\reader\converter.rs:
+C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\encoder.rs:
+C:\Users\akric\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gif-0.13.1\src\../README.md:

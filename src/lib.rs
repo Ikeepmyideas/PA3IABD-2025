@@ -1,12 +1,15 @@
 mod linear_model;
 mod mlp_model;
 mod rbfn_model;
+mod svm_model;
 
 use linear_model::{LinearModel, tanh, tanh_derivative};
 use linear_model::{sigmoid, sigmoid_derivative};
 use std::ffi::c_void;
 use mlp_model::MLP;
 use rbfn_model::{RBFN, RBFMode};
+use svm_model::SVMRegressor;
+
 
 #[no_mangle]
 pub extern "C" fn create_linear_model(n_features: usize, lr: f64, epochs: usize) -> *mut c_void {
@@ -220,4 +223,44 @@ pub extern "C" fn predict_rbfn_model(
     let model = unsafe { &*(model_ptr as *mut RBFN) };
     let x = unsafe { std::slice::from_raw_parts(x_ptr, n_features) };
     model.predict_label(&x.to_vec())
+}
+
+
+// === SVM Regressor ===
+#[no_mangle]
+pub extern "C" fn create_svm_regressor(
+    n_centers: usize,
+    gamma: f64,
+    epsilon: f64,
+    c: f64,
+) -> *mut c_void {
+    let model = Box::new(SVMRegressor::new(n_centers, gamma, epsilon, c));
+    Box::into_raw(model) as *mut c_void
+}
+
+#[no_mangle]
+pub extern "C" fn train_svm_regressor(
+    model_ptr: *mut c_void,
+    x_ptr: *const f64,
+    y_ptr: *const f64,
+    n_samples: usize,
+    n_features: usize,
+) {
+    let model = unsafe { &mut *(model_ptr as *mut SVMRegressor) };
+    let x = unsafe { std::slice::from_raw_parts(x_ptr, n_samples * n_features) };
+    let y = unsafe { std::slice::from_raw_parts(y_ptr, n_samples) };
+    let x_rows: Vec<Vec<f64>> = x.chunks(n_features).map(|c| c.to_vec()).collect();
+    let y_vec = y.to_vec();
+    model.fit(&x_rows, &y_vec);
+}
+
+#[no_mangle]
+pub extern "C" fn predict_svm_regressor(
+    model_ptr: *mut c_void,
+    x_ptr: *const f64,
+    n_features: usize,
+) -> f64 {
+    let model = unsafe { &*(model_ptr as *mut SVMRegressor) };
+    let x = unsafe { std::slice::from_raw_parts(x_ptr, n_features) };
+    model.predict(&x.to_vec())
 }
