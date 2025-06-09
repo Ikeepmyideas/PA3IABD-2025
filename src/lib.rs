@@ -1,9 +1,12 @@
 mod linear_model;
 mod mlp_model;
+mod rbfn_model;
+
 use linear_model::{LinearModel, tanh, tanh_derivative};
 use linear_model::{sigmoid, sigmoid_derivative};
 use std::ffi::c_void;
 use mlp_model::MLP;
+use rbfn_model::{RBFN, RBFMode};
 
 #[no_mangle]
 pub extern "C" fn create_linear_model(n_features: usize, lr: f64, epochs: usize) -> *mut c_void {
@@ -143,4 +146,78 @@ pub extern "C" fn predict_mlp_model(
     let model = unsafe { &*(model_ptr as *mut MLP) };
     let x = unsafe { std::slice::from_raw_parts(x_ptr, n_features) };
     model.predict(&x.to_vec())
+}
+
+
+// === RBFN Model ===
+#[no_mangle]
+pub extern "C" fn create_rbfn_regression_model(
+    n_hidden: usize,
+    sigma: f64,
+    learning_rate: f64,
+    epochs: usize,
+) -> *mut c_void {
+    let model = Box::new(RBFN::new(n_hidden, sigma, learning_rate, epochs, RBFMode::Regression));
+    Box::into_raw(model) as *mut c_void
+}
+
+#[no_mangle]
+pub extern "C" fn create_rbfn_binary_classification_model(
+    n_hidden: usize,
+    sigma: f64,
+    learning_rate: f64,
+    epochs: usize,
+) -> *mut c_void {
+    let model = Box::new(RBFN::new(n_hidden, sigma, learning_rate, epochs, RBFMode::BinaryClassification));
+    Box::into_raw(model) as *mut c_void
+}
+
+#[no_mangle]
+pub extern "C" fn create_rbfn_multiclass_model(
+    n_hidden: usize,
+    sigma: f64,
+    learning_rate: f64,
+    epochs: usize,
+    n_classes: usize,
+) -> *mut c_void {
+    let model = Box::new(RBFN::new(n_hidden, sigma, learning_rate, epochs, RBFMode::MultiClassification(n_classes)));
+    Box::into_raw(model) as *mut c_void
+}
+
+#[no_mangle]
+pub extern "C" fn train_rbfn_model_auto(
+    model_ptr: *mut c_void,
+    x_ptr: *const f64,
+    y_ptr: *const f64,
+    n_samples: usize,
+    n_features: usize,
+    n_outputs: usize,
+) {
+    let model = unsafe { &mut *(model_ptr as *mut RBFN) };
+    let x = unsafe { std::slice::from_raw_parts(x_ptr, n_samples * n_features) };
+    let y = unsafe { std::slice::from_raw_parts(y_ptr, n_samples * n_outputs) };
+
+    let x_rows: Vec<Vec<f64>> = x.chunks(n_features).map(|c| c.to_vec()).collect();
+
+    match &model.mode {
+        RBFMode::Regression | RBFMode::BinaryClassification => {
+            let y_vec: Vec<f64> = y.iter().copied().collect();
+            model.fit_closed_form(&x_rows, &y_vec);
+        }
+        RBFMode::MultiClassification(_) => {
+            let y_rows: Vec<Vec<f64>> = y.chunks(n_outputs).map(|c| c.to_vec()).collect();
+            model.fit_gradient_descent(&x_rows, &y_rows);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn predict_rbfn_model(
+    model_ptr: *mut c_void,
+    x_ptr: *const f64,
+    n_features: usize,
+) -> f64 {
+    let model = unsafe { &*(model_ptr as *mut RBFN) };
+    let x = unsafe { std::slice::from_raw_parts(x_ptr, n_features) };
+    model.predict_label(&x.to_vec())
 }
