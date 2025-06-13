@@ -1,5 +1,3 @@
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use nalgebra::{DMatrix, DVector};
 
 pub enum RBFMode {
@@ -9,26 +7,20 @@ pub enum RBFMode {
 }
 
 pub struct RBFN {
-    pub centers: Vec<Vec<f64>>,     // Centres des neurones cachés
+    pub centers: Vec<Vec<f64>>,     // Chaque point devient un centre
     pub sigma: f64,                 // écart-type de la gaussienne
-    pub weights: DMatrix<f64>,     // poids : (n_hidden, n_outputs)
+    pub weights: DMatrix<f64>,     // (n_hidden, n_outputs)
     pub learning_rate: f64,
     pub epochs: usize,
     pub mode: RBFMode,
 }
 
 impl RBFN {
-    pub fn new(n_hidden: usize, sigma: f64, learning_rate: f64, epochs: usize, mode: RBFMode) -> Self {
-        let n_outputs = match mode {
-            RBFMode::Regression => 1,
-            RBFMode::BinaryClassification => 1,
-            RBFMode::MultiClassification(n_classes) => n_classes,
-        };
-
+    pub fn new(sigma: f64, learning_rate: f64, epochs: usize, mode: RBFMode) -> Self {
         RBFN {
-            centers: Vec::with_capacity(n_hidden),
+            centers: Vec::new(), // remplis plus tard par x.clone()
             sigma,
-            weights: DMatrix::zeros(n_hidden, n_outputs),
+            weights: DMatrix::zeros(0, 0), // taille définie plus tard
             learning_rate,
             epochs,
             mode,
@@ -54,10 +46,11 @@ impl RBFN {
         DMatrix::from_row_slice(n_samples, n_hidden, &data)
     }
 
-    // Apprentissage analytique uniquement pour classification binaire ou régression
+    /// Fit pour Régression ou Classification Binaire (apprentissage analytique)
     pub fn fit_closed_form(&mut self, x: &Vec<Vec<f64>>, y: &Vec<f64>) {
-        let mut rng = thread_rng();
-        self.centers = x.choose_multiple(&mut rng, self.weights.nrows()).cloned().collect();
+        self.centers = x.clone(); // RBF Naïf : tous les points deviennent centres
+        let n_hidden = self.centers.len();
+        let n_outputs = 1;
 
         let phi = self.compute_phi(x);
         let phi_t = phi.transpose();
@@ -72,17 +65,22 @@ impl RBFN {
         }
     }
 
-    // Apprentissage par descente de gradient pour classification multiclasse
+    /// Fit pour Classification Multiclasse (descente de gradient)
     pub fn fit_gradient_descent(&mut self, x: &Vec<Vec<f64>>, y: &Vec<Vec<f64>>) {
-        let mut rng = thread_rng();
-        self.centers = x.choose_multiple(&mut rng, self.weights.nrows()).cloned().collect();
+        self.centers = x.clone(); // RBF Naïf
+        let n_hidden = self.centers.len();
+        let n_outputs = match self.mode {
+            RBFMode::MultiClassification(k) => k,
+            _ => panic!("fit_gradient_descent ne doit être utilisé que pour la classification multiclasse"),
+        };
 
+        self.weights = DMatrix::zeros(n_hidden, n_outputs);
         let phi = self.compute_phi(x);
 
         for _ in 0..self.epochs {
             let prediction = &phi * &self.weights;
             let y_flat: Vec<f64> = y.iter().flat_map(|v| v.iter()).copied().collect();
-            let y_matrix = DMatrix::from_row_slice(x.len(), self.weights.ncols(), &y_flat);
+            let y_matrix = DMatrix::from_row_slice(x.len(), n_outputs, &y_flat);
             let error = &y_matrix - &prediction;
             let gradient = phi.transpose() * error;
 
