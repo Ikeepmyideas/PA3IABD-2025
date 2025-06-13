@@ -1,65 +1,95 @@
-// === svm_model.rs ===
-use nalgebra::{DMatrix, DVector};
-use rand::seq::SliceRandom;
-use rand::thread_rng;
+// On implémentes un SVM binaire avec noyau RBF.
+//Il distingue deux classes uniquement, représentées par les labels +1 et -1.
+//Il n'y a pas de gestion multiclasse OvA ou OvO pour l'instant.
+//c'est un svm avec noyeau RBF gaussien
 
-pub struct SVMRegressor {
-    pub centers: Vec<Vec<f64>>,     // Support vectors (centres pour noyau RBF)
-    pub alphas: DVector<f64>,       // Coefficients
-    pub gamma: f64,                 // Paramètre du noyau RBF
-    pub b: f64,                     // Biais 
-    pub epsilon: f64,
+use nalgebra::{DVector};
+use std::f64::EPSILON;
+
+pub struct SVMClassifierRBF {
+    pub support_vectors: Vec<Vec<f64>>,
+    pub alphas: DVector<f64>,
+    pub labels: Vec<f64>,
+    pub gamma: f64,
+    pub b: f64,
     pub c: f64,
-
+    pub epochs: usize,
+    pub lr: f64,
 }
 
-impl SVMRegressor {
-    pub fn new(n_centers: usize, gamma: f64, epsilon: f64, c: f64) -> Self {
-        SVMRegressor {
-            centers: Vec::new(),
-            alphas: DVector::zeros(n_centers),
+impl SVMClassifierRBF {
+    pub fn new(gamma: f64, c: f64, lr: f64, epochs: usize) -> Self {
+        Self {
+            support_vectors: Vec::new(),
+            alphas: DVector::zeros(0),
+            labels: Vec::new(),
             gamma,
-            epsilon,
-            c,
             b: 0.0,
+            c,
+            epochs,
+            lr,
         }
     }
+
     fn rbf(&self, x: &Vec<f64>, c: &Vec<f64>) -> f64 {
-        let dist_sq: f64 = x.iter().zip(c.iter()).map(|(xi, ci)| (xi - ci).powi(2)).sum();
+        let dist_sq: f64 = x.iter()
+            .zip(c.iter())
+            .map(|(xi, ci)| (xi - ci).powi(2))
+            .sum();
         (-self.gamma * dist_sq).exp()
     }
 
-    fn compute_kernel_matrix(&self, x: &Vec<Vec<f64>>) -> DMatrix<f64> {
-        let n = x.len();
-        let mut kernel = DMatrix::zeros(n, self.centers.len());
-        for (i, xi) in x.iter().enumerate() {
-            for (j, cj) in self.centers.iter().enumerate() {
-                kernel[(i, j)] = self.rbf(xi, cj);
-            }
-        }
-        kernel
+    fn compute_kernel(&self, x: &Vec<f64>) -> Vec<f64> {
+        self.support_vectors
+            .iter()
+            .map(|sv| self.rbf(x, sv))
+            .collect()
     }
 
     pub fn fit(&mut self, x: &Vec<Vec<f64>>, y: &Vec<f64>) {
-        // Choix aléatoire des centres
-        let mut rng = thread_rng();
-        self.centers = x.choose_multiple(&mut rng, self.alphas.len()).cloned().collect();
+        self.support_vectors = x.clone();
+        self.labels = y.clone();
+        self.alphas = DVector::zeros(x.len());
 
-        let phi = self.compute_kernel_matrix(x);
-        let phi_t = phi.transpose();
-        let phi_t_phi = &phi_t * &phi;
+        for _ in 0..self.epochs {
+            for i in 0..x.len() {
+                let xi = &x[i];
+                let yi = y[i];
 
-        if let Some(inv) = phi_t_phi.try_inverse() {
-            let y_vec = DVector::from_vec(y.clone());
-            self.alphas = inv * (&phi_t * y_vec);
-        } else {
-            eprintln!("Erreur : matrice non inversible pour la résolution analytique");
+                let k_vec = self.compute_kernel(xi);
+                let sum: f64 = self.alphas.iter()
+                    .zip(self.labels.iter())
+                    .zip(k_vec.iter())
+                    .map(|((&alpha_j, &yj), &k)| alpha_j * yj * k)
+                    .sum();
+
+                let margin = yi * (sum + self.b);
+
+                if margin < 1.0 {
+                    // Mise à jour de alpha_i
+                    self.alphas[i] += self.lr * (1.0 - margin);
+                    self.alphas[i] = self.alphas[i].clamp(0.0, self.c);
+
+                    // Mise à jour du biais
+                    self.b += self.lr * yi;
+                }
+            }
         }
     }
 
     pub fn predict(&self, x: &Vec<f64>) -> f64 {
-        let kernel_values: Vec<f64> = self.centers.iter().map(|c| self.rbf(x, c)).collect();
-        let kernel_vector = DVector::from_vec(kernel_values);
-        self.alphas.dot(&kernel_vector) + self.b
+        let k_vec = self.compute_kernel(x);
+        let sum: f64 = self.alphas.iter()
+            .zip(self.labels.iter())
+            .zip(k_vec.iter())
+            .map(|((&alpha_j, &yj), &k)| alpha_j * yj * k)
+            .sum();
+
+        let result = sum + self.b;
+        if result >= 0.0 {
+            1.0
+        } else {
+            -1.0
+        }
     }
 }
