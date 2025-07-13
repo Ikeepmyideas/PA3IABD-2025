@@ -141,8 +141,9 @@ pub extern "C" fn create_mlp_model(
     learning_rate: f64,
     epochs: usize,
     is_regression: bool,
+    use_activation: bool,
 ) -> *mut c_void {
-    let model = Box::new(MLP::new(n_inputs, n_hidden, learning_rate, epochs, is_regression));
+    let model = Box::new(MLP::new(n_inputs, n_hidden, learning_rate, epochs, is_regression, use_activation));
     Box::into_raw(model) as *mut c_void
 }
 
