@@ -8,6 +8,7 @@ pub struct MLP {
     pub learning_rate: f64,
     pub epochs: usize,
     pub is_regression: bool,
+    pub use_activation: bool,
 }
 pub struct MLPClassifier {
     pub weights_hidden: Vec<Vec<f64>>,
@@ -20,7 +21,7 @@ pub struct MLPClassifier {
 }
 
 impl MLP {
-    pub fn new(n_inputs: usize, n_hidden: usize, learning_rate: f64, epochs: usize,is_regression: bool) -> Self {
+    pub fn new(n_inputs: usize, n_hidden: usize, learning_rate: f64, epochs: usize,is_regression: bool,use_activation: bool) -> Self {
         let mut rng = rand::thread_rng();
 
         let weights_hidden = (0..n_hidden)
@@ -41,17 +42,26 @@ impl MLP {
             learning_rate,
             epochs,
             is_regression,
-
+            use_activation, 
         }
     }
 
     fn activate(&self, x: f64) -> f64 {
-        x.tanh()
+        if self.use_activation {
+            x.tanh()
+        } else {
+            x
+        }
     }
 
     fn activate_derivative(&self, x: f64) -> f64 {
-        1.0 - x.tanh().powi(2)
+        if self.use_activation {
+            1.0 - x.tanh().powi(2)
+        } else {
+            1.0
+        }
     }
+
 
     pub fn fit(&mut self, X: &Vec<Vec<f64>>, y: &Vec<f64>) {
         for _ in 0..self.epochs {
