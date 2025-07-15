@@ -10,6 +10,8 @@ use mlp_model::MLP;
 use rbfn_model::{RBFN, RBFMode};
 use svm_model::SVMClassifierRBF;
 use nalgebra::{DMatrix, DVector};
+use crate::svm_model::SVMMultiClassRBF;
+
 
 
 #[no_mangle]
@@ -268,4 +270,111 @@ pub extern "C" fn predict_svm_rbf_classifier(
     let model = unsafe { &*(model_ptr as *mut SVMClassifierRBF) };
     let x = unsafe { std::slice::from_raw_parts(x_ptr, n_features) };
     model.predict(&x.to_vec())
+}
+
+
+
+// SVM multiclasses
+#[no_mangle]
+pub extern "C" fn create_svm_rbf_multiclass(
+    gamma: f64,
+    c: f64,
+    lr: f64,
+    epochs: usize,
+) -> *mut c_void {
+    let model = Box::new(SVMMultiClassRBF::new(gamma, c, lr, epochs));
+    Box::into_raw(model) as *mut c_void
+}
+
+#[no_mangle]
+pub extern "C" fn destroy_svm_rbf_multiclass(model_ptr: *mut c_void) {
+    if !model_ptr.is_null() {
+        unsafe {
+            let _ = Box::from_raw(model_ptr as *mut SVMMultiClassRBF);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn train_svm_rbf_multiclass(
+    model_ptr: *mut c_void,
+    x_ptr: *const f64,
+    y_ptr: *const usize,
+    n_samples: usize,
+    n_features: usize,
+) {
+    let model = unsafe { &mut *(model_ptr as *mut SVMMultiClassRBF) };
+    let x = unsafe { std::slice::from_raw_parts(x_ptr, n_samples * n_features) };
+    let y = unsafe { std::slice::from_raw_parts(y_ptr, n_samples) };
+    let x_vec = x.chunks(n_features).map(|c| c.to_vec()).collect::<Vec<_>>();
+    model.fit(&x_vec, &y.to_vec());
+}
+
+#[no_mangle]
+pub extern "C" fn predict_svm_rbf_multiclass(
+    model_ptr: *mut c_void,
+    x_ptr: *const f64,
+    n_features: usize,
+) -> usize {
+    let model = unsafe { &*(model_ptr as *mut SVMMultiClassRBF) };
+    let x = unsafe { std::slice::from_raw_parts(x_ptr, n_features) };
+    model.predict(x)
+}
+
+#[no_mangle]
+pub extern "C" fn train_and_predict_svm_rbf_multiclass(
+    x_ptr: *const f64,
+    y_ptr: *const usize,
+    n_samples: usize,
+    n_features: usize,
+    gamma: f64,
+    c: f64,
+    lr: f64,
+    epochs: usize,
+    test_point_ptr: *const f64,
+) -> usize {
+    let x = unsafe { std::slice::from_raw_parts(x_ptr, n_samples * n_features) };
+    let y = unsafe { std::slice::from_raw_parts(y_ptr, n_samples) };
+    let test_point = unsafe { std::slice::from_raw_parts(test_point_ptr, n_features) };
+    let x_vec = x.chunks(n_features).map(|c| c.to_vec()).collect::<Vec<_>>();
+    let mut model = SVMMultiClassRBF::new(gamma, c, lr, epochs);
+    model.fit(&x_vec, &y.to_vec());
+    model.predict(test_point)
+}
+
+#[no_mangle]
+pub extern "C" fn train_and_predict_svm_rbf_multiclass_grid(
+    x_ptr: *const f64,
+    y_ptr: *const usize,
+    n_samples: usize,
+    n_features: usize,
+    gamma: f64,
+    c: f64,
+    lr: f64,
+    epochs: usize,
+    grid_ptr: *const f64,
+    n_grid_points: usize,
+) -> *mut usize {
+    let x = unsafe { std::slice::from_raw_parts(x_ptr, n_samples * n_features) };
+    let y = unsafe { std::slice::from_raw_parts(y_ptr, n_samples) };
+    let grid = unsafe { std::slice::from_raw_parts(grid_ptr, n_grid_points * n_features) };
+
+    let x_vec = x.chunks(n_features).map(|c| c.to_vec()).collect::<Vec<_>>();
+    let grid_vec = grid.chunks(n_features).map(|c| c.to_vec());
+
+    let mut model = SVMMultiClassRBF::new(gamma, c, lr, epochs);
+    model.fit(&x_vec, &y.to_vec());
+
+    let preds = grid_vec.map(|pt| model.predict(&pt)).collect::<Vec<_>>();
+    let boxed = preds.into_boxed_slice();
+    Box::into_raw(boxed) as *mut usize
+}
+
+#[no_mangle]
+pub extern "C" fn destroy_usize_array(ptr: *mut usize, len: usize) {
+    if !ptr.is_null() {
+        unsafe {
+            let _ = Vec::from_raw_parts(ptr, len, len);
+        }
+    }
 }
