@@ -1,53 +1,29 @@
 mod linear_model;
-mod prepare_dataset;
+mod mlp_model;
+mod rbfn_model;
 
+use linear_model::MultiClassLinear;
 use linear_model::{LinearModel, ActivationFn};
-use csv::Reader;
+use std::ffi::c_void;
+use std::slice;
+use nalgebra::{DMatrix, DVector};
+use mlp_model::MLP;
+use mlp_model::MLPClassifier;
 
+use rbfn_model::{RBFN, RBFMode};
 fn main() {
-    // Génération des CSV
-    prepare_dataset::generate_dataset_train();
-    prepare_dataset::generate_dataset_test();
+    let x = vec![
+        vec![1.0, 1.0],
+        vec![2.0, 3.0],
+        vec![3.0, 3.0],
+    ];
+    let y = vec![1.0, -1.0, -1.0];
 
-    // Chargement des données
-    let (x_train, y_train) = load_dataset("dataset_train.csv");
-    let (x_test, y_test) = load_dataset("dataset_test.csv");
+    let mut model = RBFN::new(1.0, 0.1, 100, RBFMode::BinaryClassification);
+    model.fit_closed_form(&x, &y);
 
-    if x_train.is_empty() || x_test.is_empty() {
-        println!("Erreur : dataset vide.");
-        return;
+    for xi in &x {
+        let pred = model.predict_label(xi);
+        println!("➡️ Entrée : {:?} => Prédiction : {}", xi, pred);
     }
-
-    // Création et entraînement du modèle
-    let mut model = LinearModel::new(x_train[0].len(), 0.1, 1000, ActivationFn::Sign);
-    model.fit(&x_train, &y_train, true);
-
-    // Prédiction
-    let preds = model.predict(&x_test);
-
-    // Résultats
-    for (i, (p, y)) in preds.iter().zip(y_test.iter()).enumerate() {
-        println!("Exemple {} → vrai: {}, prédit: {:.3}", i, y, p);
-    }
-}
-
-// Lecture d'un dataset CSV
-fn load_dataset(path: &str) -> (Vec<Vec<f32>>, Vec<f32>) {
-    let mut rdr = Reader::from_path(path).unwrap();
-    let mut x = Vec::new();
-    let mut y = Vec::new();
-
-    for result in rdr.records() {
-        let record = result.unwrap();
-        let features: Vec<f32> = record.iter()
-            .take(record.len() - 1)
-            .map(|v| v.parse().unwrap_or(0.0))
-            .collect();
-
-        let label = record.get(record.len() - 1).unwrap().parse().unwrap_or(0.0);
-        x.push(features);
-        y.push(if label == 0.0 { 1.0 } else { -1.0 });
-    }
-
-    (x, y)
 }
