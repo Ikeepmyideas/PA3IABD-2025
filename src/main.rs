@@ -1,7 +1,7 @@
 mod linear_model;
 mod mlp_model;
 mod rbfn_model;
-
+mod loss;
 use linear_model::MultiClassLinear;
 use linear_model::{LinearModel, ActivationFn};
 use std::ffi::c_void;

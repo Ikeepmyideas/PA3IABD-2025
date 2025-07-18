@@ -1,6 +1,7 @@
 mod linear_model;
 mod mlp_model;
 mod rbfn_model;
+mod loss;
 
 use linear_model::MultiClassLinear;
 use linear_model::{LinearModel, ActivationFn};
@@ -292,4 +293,24 @@ pub extern "C" fn predict_rbfn_model(
     let model = unsafe { &*(model_ptr as *mut RBFN) };
     let x = unsafe { std::slice::from_raw_parts(x_ptr, n_features) };
     model.predict_label(&x.to_vec())
+}
+#[no_mangle]
+pub extern "C" fn evaluate_mlp_classifier_mse(
+    model_ptr: *mut c_void,
+    x_ptr: *const f64,
+    y_ptr: *const u32,
+    n_samples: usize,
+    n_features: usize,
+) -> f32 {
+    let model = unsafe { &*(model_ptr as *mut MLPClassifier) };
+    let x = unsafe { std::slice::from_raw_parts(x_ptr, n_samples * n_features) };
+    let y = unsafe { std::slice::from_raw_parts(y_ptr, n_samples) };
+
+    let x_rows: Vec<Vec<f64>> = x.chunks(n_features).map(|c| c.to_vec()).collect();
+    let y_vec: Vec<usize> = y.iter().map(|&val| val as usize).collect();
+
+    match model.evaluate_mse(&x_rows, &y_vec) {
+        Some(score) => score,
+        None => -1.0,
+    }
 }

@@ -1,4 +1,5 @@
 use rand::Rng;
+use crate::loss::mse;
 
 pub struct MLP {
     pub weights_hidden: Vec<Vec<f64>>,
@@ -236,4 +237,32 @@ impl MLPClassifier {
             .map(|(idx, _)| idx)
             .unwrap_or(0)
     }
+    pub fn evaluate_mse(&self, X: &Vec<Vec<f64>>, y: &Vec<usize>) -> Option<f32> {
+        let mut predicted: Vec<f32> = Vec::new();
+        let mut expected: Vec<f32> = Vec::new();
+
+        for (xi, &yi) in X.iter().zip(y.iter()) {
+            let hidden_input: Vec<f64> = self.weights_hidden.iter()
+                .zip(self.bias_hidden.iter())
+                .map(|(w, &b)| w.iter().zip(xi.iter()).map(|(wi, xi)| wi * xi).sum::<f64>() + b)
+                .collect();
+
+            let hidden_output: Vec<f64> = hidden_input.iter().map(|&h| self.activate(h)).collect();
+
+            let logits: Vec<f64> = self.weights_output.iter()
+                .zip(self.bias_output.iter())
+                .map(|(w_out, &b)| hidden_output.iter().zip(w_out.iter()).map(|(h, w)| h * w).sum::<f64>() + b)
+                .collect();
+
+            let probs = softmax(&logits);
+            predicted.extend(probs.iter().map(|&p| p as f32));
+
+            let mut one_hot = vec![0.0f32; self.n_classes];
+            one_hot[yi] = 1.0;
+            expected.extend(one_hot);
+        }
+
+        mse(&predicted, &expected)
+    }
+
 }
