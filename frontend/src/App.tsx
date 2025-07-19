@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+
 import {
   Button,
   MenuItem,
@@ -9,24 +10,40 @@ import {
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import { LineChart } from '@mui/x-charts/LineChart';
 
+type LayerConfig = { neurons: number };
+
 function App() {
   const [image, setImage] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [model, setModel] = useState('linear');
-  const [layers, setLayers] = useState([{ neurons: 8 }]);
+  const [layers, setLayers] = useState<LayerConfig[]>([{ neurons: 8 }]);
   const [epochs, setEpochs] = useState(10);
+  const [gamma, setGamma] = useState(0.05);
+  const [C, setC] = useState(1.0);
+  const [learningRate, setLearningRate] = useState(0.01);
+  const [activationType, setActivationType] = useState(2);
+  const [sigma, setSigma] = useState(1.0);
   const [selectedGraph, setSelectedGraph] = useState<string[]>([]);
+
+
+  const [modelName, setModelName] = useState('');
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+
+
   const [resultsFile, setResultsFile] = useState<{
     results: { name: string; data: number[] }[];
   }>({ results: [] });
-
   const [resultsTraining, setResultsTraining] = useState<{ files: string[] }>({
     files: [],
   });
+  const [prediction, setPrediction] = useState<string | null>(null);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setImage(URL.createObjectURL(file));
+    setImageFile(file);
+    setPrediction(null);
   };
 
   const handleAddLayer = () => {
@@ -39,85 +56,232 @@ function App() {
     setLayers(updated);
   };
 
+  const imageToFloatArray = (file: File): Promise<number[]> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const img = new Image();
+        img.onload = function () {
+          const canvas = document.createElement('canvas');
+          canvas.width = 64;
+          canvas.height = 64;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return reject('Erreur contexte canvas');
+
+          ctx.drawImage(img, 0, 0, 64, 64);
+          const imageData = ctx.getImageData(0, 0, 64, 64);
+          const data = imageData.data;
+          const grayPixels: number[] = [];
+
+          for (let i = 0; i < data.length; i += 4) {
+            const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
+            grayPixels.push(gray / 255);
+          }
+
+          resolve(grayPixels);
+        };
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleTrain = async () => {
     try {
-      const nFeatures = 2; // à adapter dynamiquement plus tard
-      const learningRate = 0.1;
-      const activationType = 2;
+      const labels = ['A', 'B', 'C'];
+      const n_features = 64 * 64;
 
-      const xTrain = [
-        [1.0, 2.0],
-        [2.0, 1.0],
-        [3.0, 4.0],
-        [4.0, 3.0],
-      ];
-      const yTrain = [1.0, 0.0, 1.0, 0.0];
-
-      // Crée le modèle linear
-      const resCreate = await fetch(
-        `http://localhost:8000/linear/create?n_features=${nFeatures}&learning_rate=${learningRate}&max_epochs=${epochs}&activation_type=${activationType}`,
-        { method: 'POST' }
-      );
-      if (!resCreate.ok) throw new Error('Erreur création modèle');
-
-      // Entraîne le modèle
-      const resTrain = await fetch('http://localhost:8000/linear/train', {
+      if (model === 'linear') {
+        await fetch(`http://localhost:8000/linear/create/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            n_features,
+            learning_rate: learningRate,
+            max_epochs: epochs,
+            activation_type: activationType,
+            n_classes: labels.length,
+          }),
+        });
+      } else if (model === 'mlp') {
+        await fetch(`http://localhost:8000/mlp/create/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          x: xTrain,
-          y: yTrain,
-          show_logs: true,
+          n_inputs: n_features,
+          n_hidden: layers[0]?.neurons || 8,
+          n_classes: labels.length,
+          learning_rate: learningRate,
+          epochs,
         }),
       });
-      if (!resTrain.ok) throw new Error('Erreur entraînement');
 
-      // Pour la démo : on génère des pertes simulées
-      const fakeLosses = Array.from({ length: epochs }, (_, i) =>
-        parseFloat((1.0 / (i + 1)).toFixed(3))
-      );
-      const runName = `run_${Date.now()}`;
+      } else if (model === 'rbf') {
+        await fetch(`http://localhost:8000/rbfn_multiclass/create/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sigma,
+            learning_rate: learningRate,
+            epochs,
+            n_classes: labels.length,
+          }),
+        });
+      }else if (model === 'svm') {
+          await fetch(`http://localhost:8000/svm/create/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            gamma,
+            c: C,
+            learning_rate: learningRate,  
+            epochs,
+          }),
+        });
+        }
+
+      const trainConfig: any = {
+        labels,
+        learning_rate: learningRate,
+        epochs,
+        activation_type: activationType,
+        sigma,
+        n_hidden: layers[0]?.neurons || 8,
+        gamma,
+        c: C,
+      };
+
+      const res = await fetch(`http://localhost:8000/${model}/train/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(trainConfig),
+      });
+
+
+      if (!res.ok) throw new Error(`Erreur entraînement (${model})`);
+
+      const result = await res.json();
+      const mseLoss = result.mse_loss || 0.0;
+
+      const runName = `run_${model}_${Date.now()}`;
+      const lossArray = result.loss_per_epoch || Array(epochs).fill(parseFloat(mseLoss.toFixed(4)));
 
       setResultsTraining((prev) => ({
         files: [...prev.files, runName],
       }));
 
       setResultsFile((prev) => ({
-        results: [...prev.results, { name: runName, data: fakeLosses }],
+        results: [...prev.results, { name: runName, data: lossArray }],
       }));
 
       setSelectedGraph((prev) => [...prev, runName]);
+
+      alert(`${model.toUpperCase()} entrainé avec succès (Loss: ${mseLoss.toFixed(4)})`);
+
     } catch (err: any) {
-      alert(`❌ ${err.message}`);
+      alert(`${err.message}`);
     }
   };
 
+  const handlePredict = async () => {
+  if (!imageFile) return alert('Veuillez importer une image.');
+
+  try {
+    const pixels = await imageToFloatArray(imageFile);
+
+    if (pixels.length !== 64 * 64) {
+      return alert("l’image doit faire 64x64 (4096 pixels)");
+    }
+
+    const input = { x: pixels };
+
+    let endpoint = '';
+    if (model === 'linear') {
+      endpoint = 'linear/predict/';
+    } else if (model === 'mlp') {
+      endpoint = 'mlp/predict/';
+    } else if (model === 'rbf') {
+      endpoint = 'rbfn/predict/';
+    } else if (model === 'svm') {
+      endpoint = 'svm/predict/';
+    } else {
+      return alert('modele non pris en charge pour la prédiction');
+    }
+
+    const res = await fetch(`http://localhost:8000/${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+
+    if (!res.ok) throw new Error('Erreur lors de la prédiction');
+
+    const data = await res.json();
+
+    if ('label' in data) {
+      setPrediction(data.label);
+    } else if (Array.isArray(data.predictions)) {
+      setPrediction(data.predictions[0]);
+    } else {
+      setPrediction('?');
+    }
+
+
+  } catch (err: any) {
+    alert(`${err.message}`);
+  }
+};
+const handleSaveModel = async () => {
+  if (!modelName.trim()) return alert('Please enter a model name.');
+  try {
+    const res = await fetch('http://localhost:8000/model/save/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: modelName.trim() }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Unknown error');
+    }
+
+    alert('Model saved successfully.');
+    fetchModelList();
+  } catch (err: any) {
+    alert(`❌ Error saving model: ${err.message}`);
+  }
+};
+
+  const handleLoadModel = async (name: string) => {
+    const res = await fetch('http://localhost:8000/model/load/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(name),
+    });
+    if (res.ok) {
+      alert(`Model "${name}" loaded.`);
+    } else {
+      alert('Error loading model.');
+    }
+  };
+
+  const fetchModelList = async () => {
+    const res = await fetch('http://localhost:8000/model/list/');
+    const data = await res.json();
+    setAvailableModels(data.models || []);
+  };
+  useEffect(() => {
+    fetchModelList();
+  }, []);
+
+
+
   return (
     <div style={{ display: 'flex', height: '100vh' }}>
-      {/* Sidebar gauche */}
+      {/* Sidebar */}
       <div style={{ width: '300px', background: '#f0f0f0', padding: '1rem' }}>
-        <Typography variant="h6">📂 Importation</Typography>
-
-        <Button
-          component="label"
-          variant="contained"
-          startIcon={<CloudUploadIcon />}
-          fullWidth
-          sx={{ marginTop: '1rem' }}
-        >
-          Importer une image
-          <input
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={handleImageUpload}
-          />
-        </Button>
-
-        <Typography variant="h6" sx={{ marginTop: '2rem' }}>
-          🧠 Modèle
-        </Typography>
-
+        <Typography variant="h6">🧠 Modele</Typography>
         <Select
           fullWidth
           value={model}
@@ -130,9 +294,10 @@ function App() {
           <MenuItem value="mlp">MLP</MenuItem>
           <MenuItem value="rbf">RBF</MenuItem>
           <MenuItem value="svm">SVM</MenuItem>
+
         </Select>
 
-        {(model === 'mlp' || model === 'rbf') && (
+        {(model === 'mlp') && (
           <div style={{ marginTop: '1rem' }}>
             <Typography variant="subtitle1">📐 Couches</Typography>
             {layers.map((layer, index) => (
@@ -143,9 +308,10 @@ function App() {
                 value={layer.neurons}
                 fullWidth
                 sx={{ marginBottom: '0.5rem' }}
-                onChange={(e) =>
-                  handleChangeNeurons(index, parseInt(e.target.value))
-                }
+                onChange={(e) => {
+                  const value = parseInt(e.target.value);
+                  if (!isNaN(value)) handleChangeNeurons(index, value);
+                }}
               />
             ))}
             <Button
@@ -154,19 +320,105 @@ function App() {
               fullWidth
               sx={{ marginTop: '0.5rem' }}
             >
-              ➕ Ajouter une couche
+              Add layer
             </Button>
           </div>
         )}
 
+        {model === 'linear' && (
+          <>
+            <Typography variant="subtitle1" sx={{ marginTop: '1rem' }}>
+              🔧 Config Linear
+            </Typography>
+            <TextField
+              label="Learning Rate"
+              type="number"
+              fullWidth
+              value={learningRate}
+              inputProps={{ step: 0.001 }}
+              onChange={(e) => setLearningRate(parseFloat(e.target.value))}
+              sx={{ marginBottom: '0.5rem' }}
+            />
+            <TextField
+              label="Activation Type (0:Linear, 1:Tanh, 2:Sigmoid)"
+              type="number"
+              fullWidth
+              value={activationType}
+              inputProps={{ min: 0, max: 2 }}
+              onChange={(e) => setActivationType(parseInt(e.target.value))}
+              sx={{ marginBottom: '0.5rem' }}
+            />
+          </>
+        )}
+
+        {(model === 'mlp' || model === 'rbf') && (
+          <TextField
+            label="Learning Rate"
+            type="number"
+            fullWidth
+            value={learningRate}
+            inputProps={{ step: 0.001 }}
+            onChange={(e) => setLearningRate(parseFloat(e.target.value))}
+            sx={{ marginTop: '1rem', marginBottom: '0.5rem' }}
+          />
+        )}
+
+        {model === 'rbf' && (
+          <TextField
+            label="Sigma"
+            type="number"
+            fullWidth
+            value={sigma}
+            inputProps={{ step: 0.1 }}
+            onChange={(e) => setSigma(parseFloat(e.target.value))}
+            sx={{ marginBottom: '0.5rem' }}
+          />
+        )}
+
+        {model === 'svm' && (
+        <>
+          <TextField
+            label="Gamma"
+            type="number"
+            fullWidth
+            value={gamma}
+            inputProps={{ step: 0.01 }}
+            onChange={(e) => setGamma(parseFloat(e.target.value))}
+            sx={{ marginTop: '1rem', marginBottom: '0.5rem' }}
+          />
+          <TextField
+            label="C (Penalty)"
+            type="number"
+            fullWidth
+            value={C}
+            inputProps={{ step: 0.1 }}
+            onChange={(e) => setC(parseFloat(e.target.value))}
+            sx={{ marginBottom: '0.5rem' }}
+          />
+          <TextField
+            label="Learning Rate"
+            type="number"
+            fullWidth
+            value={learningRate}
+            inputProps={{ step: 0.001 }}
+            onChange={(e) => setLearningRate(parseFloat(e.target.value))}
+            sx={{ marginBottom: '0.5rem' }}
+          />
+        </>
+      )}
+
+
         <Typography variant="h6" sx={{ marginTop: '2rem' }}>
-          🔁 Époques
+          🔁 Epochs
         </Typography>
         <TextField
           type="number"
           fullWidth
           value={epochs}
-          onChange={(e) => setEpochs(parseInt(e.target.value))}
+          onChange={(e) => {
+            const value = parseInt(e.target.value);
+            if (!isNaN(value)) setEpochs(value);
+          }}
           inputProps={{ min: 1 }}
         />
 
@@ -177,27 +429,93 @@ function App() {
           sx={{ marginTop: '1.5rem' }}
           onClick={handleTrain}
         >
-          🚀 Lancer l'entraînement
+        Start training
         </Button>
+
+
+        <Typography variant="h6" sx={{ marginTop: '2rem' }}>💾 Model Save / Load</Typography>
+
+<TextField
+  label="Model name"
+  fullWidth
+  value={modelName}
+  onChange={(e) => setModelName(e.target.value)}
+  sx={{ marginBottom: '0.5rem' }}
+/>
+
+<Button
+  variant="contained"
+  fullWidth
+  onClick={handleSaveModel}
+  sx={{ marginBottom: '1rem' }}
+>
+  💾 Save model
+</Button>
+
+<Typography variant="subtitle1">📂 Available Models</Typography>
+{availableModels.length === 0 && (
+  <Typography variant="body2">No models found.</Typography>
+)}
+{availableModels.map((name) => (
+  <Button
+    key={name}
+    variant="outlined"
+    fullWidth
+    sx={{ marginTop: '0.25rem' }}
+    onClick={() => handleLoadModel(name)}
+  >
+    📥 Load {name}
+  </Button>
+))}
       </div>
 
-      {/* Zone droite */}
+
+      {/* Right zone */}
       <div style={{ flex: 1, padding: '2rem' }}>
         <Typography variant="h5" gutterBottom>
-          📊 Aperçu de l’image
+          Select image for prediction
         </Typography>
-        {image ? (
-          <img
-            src={image}
-            alt="importée"
-            style={{ maxWidth: '100%', borderRadius: 8 }}
+
+        <Button
+          component="label"
+          variant="contained"
+          startIcon={<CloudUploadIcon />}
+          sx={{ marginBottom: '1rem' }}
+        >
+          Upload an image
+          <input
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={handleImageUpload}
           />
-        ) : (
-          <Typography>Aucune image sélectionnée</Typography>
+        </Button>
+
+        {image && (
+          <>
+            <img
+              src={image}
+              alt="Image importée"
+              style={{ maxWidth: '300px', display: 'block', borderRadius: 8 }}
+            />
+            <Button
+              variant="contained"
+              color="secondary"
+              sx={{ marginTop: '1rem' }}
+              onClick={handlePredict}
+            >
+              Predict
+            </Button>
+            {prediction && (
+              <Typography variant="h6" sx={{ marginTop: '1rem' }}>
+                Prediction : {prediction}
+              </Typography>
+            )}
+          </>
         )}
 
         <div className="view_training_results" style={{ marginTop: '3rem' }}>
-          <Typography variant="h5">📈 Résultats d’entraînement</Typography>
+          <Typography variant="h5">Training results</Typography>
 
           <div className="container-results" style={{ marginBottom: '1rem' }}>
             {resultsTraining?.files.map((file, index) => (
