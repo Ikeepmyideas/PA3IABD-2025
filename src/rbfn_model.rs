@@ -1,4 +1,5 @@
 use nalgebra::{DMatrix, DVector};
+use crate::loss::mse;
 
 pub enum RBFMode {
     Regression,
@@ -8,11 +9,12 @@ pub enum RBFMode {
 
 pub struct RBFN {
     pub centers: Vec<Vec<f64>>,     // Chaque point devient un centre
-    pub sigma: f64,                 // écart-type de la gaussienne
+    pub sigma: f64,                 // écart type de la gaussienne
     pub weights: DMatrix<f64>,     // (n_hidden, n_outputs)
     pub learning_rate: f64,
     pub epochs: usize,
     pub mode: RBFMode,
+    pub loss_per_epoch: Vec<f32>, 
 }
 
 impl RBFN {
@@ -24,6 +26,7 @@ impl RBFN {
             learning_rate,
             epochs,
             mode,
+            loss_per_epoch: Vec::new(),
         }
     }
 
@@ -71,20 +74,28 @@ impl RBFN {
         let n_hidden = self.centers.len();
         let n_outputs = match self.mode {
             RBFMode::MultiClassification(k) => k,
-            _ => panic!("fit_gradient_descent ne doit être utilisé que pour la classification multiclasse"),
+            _ => panic!("fit_gradient_descent ne doit etre utilisé que pour la classification multiclasse"),
         };
 
         self.weights = DMatrix::zeros(n_hidden, n_outputs);
         let phi = self.compute_phi(x);
-
+        self.loss_per_epoch.clear();
         for _ in 0..self.epochs {
             let prediction = &phi * &self.weights;
+
             let y_flat: Vec<f64> = y.iter().flat_map(|v| v.iter()).copied().collect();
             let y_matrix = DMatrix::from_row_slice(x.len(), n_outputs, &y_flat);
-            let error = &y_matrix - &prediction;
-            let gradient = phi.transpose() * error;
 
+            let error = &y_matrix - &prediction;
+            let gradient = phi.transpose() * &error;
             self.weights += self.learning_rate * gradient / (x.len() as f64);
+
+            let predicted: Vec<f32> = prediction.iter().map(|&v| v as f32).collect();
+            let expected: Vec<f32> = y_flat.iter().map(|&v| v as f32).collect();
+
+            if let Some(loss) = mse(&predicted, &expected) {
+                self.loss_per_epoch.push(loss);
+            }
         }
     }
 
