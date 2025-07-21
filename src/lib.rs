@@ -1,18 +1,17 @@
 mod linear_model;
+mod loss;
 mod mlp_model;
 mod rbfn_model;
 mod svm_model;
 
-use linear_model::{LinearModel, tanh, tanh_derivative};
-use linear_model::{sigmoid, sigmoid_derivative};
-use std::ffi::c_void;
-use mlp_model::MLP;
-use rbfn_model::{RBFN, RBFMode};
-use svm_model::SVMClassifierRBF;
-use nalgebra::{DMatrix, DVector};
 use crate::svm_model::SVMMultiClassRBF;
-
-
+use linear_model::{sigmoid, sigmoid_derivative};
+use linear_model::{tanh, tanh_derivative, LinearModel};
+use mlp_model::MLP;
+use nalgebra::{DMatrix, DVector};
+use rbfn_model::{RBFMode, RBFN};
+use std::ffi::c_void;
+use svm_model::SVMClassifierRBF;
 
 #[no_mangle]
 pub extern "C" fn create_linear_model(n_features: usize, lr: f64, epochs: usize) -> *mut c_void {
@@ -20,7 +19,7 @@ pub extern "C" fn create_linear_model(n_features: usize, lr: f64, epochs: usize)
     Box::into_raw(model) as *mut c_void
 }
 // === Modèle Linéaire ===
-//  Régression 
+//  Régression
 #[no_mangle]
 pub extern "C" fn train_linear_model(
     model_ptr: *mut c_void,
@@ -50,7 +49,7 @@ pub extern "C" fn predict_linear_model(
     model.predict(&x.to_vec(), None)
 }
 
-//  Classification binaire (activation tanh) 
+//  Classification binaire (activation tanh)
 #[no_mangle]
 pub extern "C" fn train_linear_model_classification(
     model_ptr: *mut c_void,
@@ -80,8 +79,7 @@ pub extern "C" fn predict_linear_model_classification(
     model.predict(&x.to_vec(), Some(tanh))
 }
 
-
-//  Classification multiclasses (activation sigmoide) 
+//  Classification multiclasses (activation sigmoide)
 #[no_mangle]
 pub extern "C" fn train_linear_model_sigmoid(
     model_ptr: *mut c_void,
@@ -110,7 +108,6 @@ pub extern "C" fn predict_linear_model_sigmoid(
     let x = unsafe { std::slice::from_raw_parts(x_ptr, n_features) };
     model.predict(&x.to_vec(), Some(sigmoid))
 }
-
 
 // === Modèle MLP ===
 
@@ -154,7 +151,6 @@ pub extern "C" fn predict_mlp_model(
     model.predict(&x.to_vec())
 }
 
-
 // === RBFN Model ===
 // regression
 #[no_mangle]
@@ -174,7 +170,12 @@ pub extern "C" fn create_rbfn_binary_classification_model(
     learning_rate: f64,
     epochs: usize,
 ) -> *mut c_void {
-    let model = Box::new(RBFN::new(sigma, learning_rate, epochs, RBFMode::BinaryClassification));
+    let model = Box::new(RBFN::new(
+        sigma,
+        learning_rate,
+        epochs,
+        RBFMode::BinaryClassification,
+    ));
     Box::into_raw(model) as *mut c_void
 }
 
@@ -186,7 +187,12 @@ pub extern "C" fn create_rbfn_multiclass_model(
     epochs: usize,
     n_classes: usize,
 ) -> *mut c_void {
-    let model = Box::new(RBFN::new(sigma, learning_rate, epochs, RBFMode::MultiClassification(n_classes)));
+    let model = Box::new(RBFN::new(
+        sigma,
+        learning_rate,
+        epochs,
+        RBFMode::MultiClassification(n_classes),
+    ));
     Box::into_raw(model) as *mut c_void
 }
 
@@ -227,8 +233,6 @@ pub extern "C" fn predict_rbfn_model(
     let x = unsafe { std::slice::from_raw_parts(x_ptr, n_features) };
     model.predict_label(&x.to_vec())
 }
-
-
 
 // === SVM RBF ===
 
@@ -271,8 +275,6 @@ pub extern "C" fn predict_svm_rbf_classifier(
     let x = unsafe { std::slice::from_raw_parts(x_ptr, n_features) };
     model.predict(&x.to_vec())
 }
-
-
 
 // SVM multiclasses
 #[no_mangle]
@@ -377,4 +379,45 @@ pub extern "C" fn destroy_usize_array(ptr: *mut usize, len: usize) {
             let _ = Vec::from_raw_parts(ptr, len, len);
         }
     }
+}
+
+#[no_mangle]
+pub extern "C" fn get_loss_history(
+    ptr: *const SVMMultiClassRBF,
+    out_ptr: *mut f32,
+    max_len: usize,
+) -> usize {
+    let model = unsafe {
+        assert!(!ptr.is_null());
+        &*ptr
+    };
+
+    let mut all_losses = Vec::new();
+
+    for clf in &model.classifiers {
+        all_losses.extend_from_slice(&clf.loss_history);
+    }
+
+    // Moyenne par epoch :
+    let epochs = model.epochs;
+    let mut avg_losses = vec![0.0f32; epochs];
+    let mut counts = vec![0usize; epochs];
+
+    for (i, loss) in all_losses.iter().enumerate() {
+        let epoch = i % epochs;
+        avg_losses[epoch] += loss;
+        counts[epoch] += 1;
+    }
+
+    for i in 0..epochs {
+        if counts[i] > 0 {
+            avg_losses[i] /= counts[i] as f32;
+        }
+    }
+
+    let len = avg_losses.len().min(max_len);
+    unsafe {
+        std::ptr::copy_nonoverlapping(avg_losses.as_ptr(), out_ptr, len);
+    }
+    len
 }
