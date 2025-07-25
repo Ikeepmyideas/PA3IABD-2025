@@ -9,6 +9,7 @@ import {
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import { LineChart } from '@mui/x-charts/LineChart';
+import { CircularProgress } from '@mui/material';
 
 type LayerConfig = { neurons: number };
 
@@ -21,14 +22,20 @@ function App() {
   const [gamma, setGamma] = useState(0.05);
   const [C, setC] = useState(1.0);
   const [learningRate, setLearningRate] = useState(0.01);
-  const [activationType, setActivationType] = useState(2);
+  const [activationType, setActivationType] = useState(0);      // 0 = ReLU, 1 = Tanh
+  const [batchSize, setBatchSize] = useState(32);               // Taille des mini-batches
+  const [lambdaL2, setLambdaL2] = useState(0.0);                // Coefficient L2
+const neurons = layers[0]?.neurons || 8; // Un seul nombre
+
   const [sigma, setSigma] = useState(1.0);
   const [selectedGraph, setSelectedGraph] = useState<string[]>([]);
 
-
   const [modelName, setModelName] = useState('');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [isTraining, setIsTraining] = useState(false);
+  const [isTrained, setIsTrained] = useState(false);
 
+  const [loadedModelName, setLoadedModelName] = useState<string | null>(null);
 
   const [resultsFile, setResultsFile] = useState<{
     results: { name: string; data: number[] }[];
@@ -37,6 +44,7 @@ function App() {
     files: [],
   });
   const [prediction, setPrediction] = useState<string | null>(null);
+
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -63,13 +71,13 @@ function App() {
         const img = new Image();
         img.onload = function () {
           const canvas = document.createElement('canvas');
-          canvas.width = 64;
-          canvas.height = 64;
+          canvas.width = 32;
+          canvas.height = 32;
           const ctx = canvas.getContext('2d');
           if (!ctx) return reject('Erreur contexte canvas');
 
-          ctx.drawImage(img, 0, 0, 64, 64);
-          const imageData = ctx.getImageData(0, 0, 64, 64);
+          ctx.drawImage(img, 0, 0, 32, 32);
+          const imageData = ctx.getImageData(0, 0,32, 32);
           const data = imageData.data;
           const grayPixels: number[] = [];
 
@@ -88,69 +96,104 @@ function App() {
   };
 
   const handleTrain = async () => {
+    setIsTraining(true); 
     try {
       const labels = ['A', 'B', 'C'];
-      const n_features = 64 * 64;
+      const n_features = 32 * 32;
 
-      if (model === 'linear') {
-        await fetch(`http://localhost:8000/linear/create/`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            n_features,
-            learning_rate: learningRate,
-            max_epochs: epochs,
-            activation_type: activationType,
-            n_classes: labels.length,
-          }),
-        });
-      } else if (model === 'mlp') {
-        await fetch(`http://localhost:8000/mlp/create/`, {
+      const createUrl = {
+        linear: 'linear/create/',
+        mlp: 'mlp/create/',
+        mlp_deep: 'mlp_deep/create/',
+        rbf: 'rbfn_multiclass/create/',
+        svm: 'svm/create/',
+      }[model];
+
+      const createBody =
+        model === 'linear'
+          ? {
+              n_features,
+              learning_rate: learningRate,
+              max_epochs: epochs,
+              activation_type: activationType,
+              n_classes: labels.length,
+            }
+          : model === 'mlp'
+          ? {
+              n_inputs: n_features,
+              n_hidden: layers[0]?.neurons || 8,
+              n_classes: labels.length,
+              learning_rate: learningRate,
+              epochs,
+            }
+          : model === 'rbf'
+          ? {
+              sigma,
+              learning_rate: learningRate,
+              epochs,
+              n_classes: labels.length,
+            }
+          : model === 'svm'
+          ? {
+              gamma,
+              c: C,
+              learning_rate: learningRate,
+              epochs,
+            }
+            : model === 'mlp_deep'
+            ? {
+                 n_features,
+                  hidden_units: neurons,
+                  n_layers: layers.length,
+                  n_classes: labels.length,
+                  learning_rate: learningRate,
+                  epochs,
+                  activation_type: activationType,
+                  batch_size: batchSize,
+                  lambda_: lambdaL2
+              }
+
+          : {};
+
+      await fetch(`http://localhost:8000/${createUrl}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          n_inputs: n_features,
-          n_hidden: layers[0]?.neurons || 8,
-          n_classes: labels.length,
-          learning_rate: learningRate,
-          epochs,
-        }),
+        body: JSON.stringify(createBody),
       });
 
-      } else if (model === 'rbf') {
-        await fetch(`http://localhost:8000/rbfn_multiclass/create/`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sigma,
-            learning_rate: learningRate,
-            epochs,
-            n_classes: labels.length,
-          }),
-        });
-      }else if (model === 'svm') {
-          await fetch(`http://localhost:8000/svm/create/`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            gamma,
-            c: C,
-            learning_rate: learningRate,  
-            epochs,
-          }),
-        });
-        }
 
-      const trainConfig: any = {
+      const trainConfig: any =
+  model === 'mlp_deep'
+    ? {
+        labels,
+        n_features,
+        hidden_units: neurons,
+        n_layers: layers.length,
+        n_classes: labels.length,
+        learning_rate: learningRate,
+        epochs,
+        activation_type: activationType,
+        batch_size: batchSize,
+        lambda_: lambdaL2
+      }
+    : model === 'mlp'
+    ? {
         labels,
         learning_rate: learningRate,
         epochs,
         activation_type: activationType,
+        n_hidden: layers[0]?.neurons || 8
+      }
+    : {
+        labels,
+        learning_rate: learningRate,
+        epochs,
         sigma,
-        n_hidden: layers[0]?.neurons || 8,
         gamma,
-        c: C,
+        c: C
       };
+
+
 
       const res = await fetch(`http://localhost:8000/${model}/train/`, {
         method: 'POST',
@@ -178,91 +221,124 @@ function App() {
       setSelectedGraph((prev) => [...prev, runName]);
 
       alert(`${model.toUpperCase()} entrainé avec succès (Loss: ${mseLoss.toFixed(4)})`);
+      setIsTrained(true);
+
+    } catch (err: any) {
+      alert(`${err.message}`);
+      setIsTrained(false);
+    } finally {
+      setIsTraining(false); 
+    }
+  };
+
+  const handlePredict = async () => {
+    if (!imageFile) return alert('Veuillez importer une image.');
+
+    try {
+      const pixels = await imageToFloatArray(imageFile);
+
+      if (pixels.length !== 32 * 32) {
+        return alert("l’image doit faire 64x64 (4096 pixels)");
+      }
+      const input = model === 'linear' ? { x: [pixels] } : { x: pixels };
+
+      let endpoint = '';
+      if (model === 'linear') {
+        endpoint = 'linear/predict/';
+      } else if (model === 'mlp') {
+        endpoint = 'mlp/predict/';
+      } else if (model === 'rbf') {
+        endpoint = 'rbfn/predict/';
+      } else if (model === 'svm') {
+        endpoint = 'svm/predict/';
+       } else if (model === 'mlp_deep') {
+        endpoint = 'mlp_deep/predict/';
+      } else {
+        return alert('Modèle non pris en charge pour la prédiction');
+      }
+
+      const res = await fetch(`http://localhost:8000/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+
+      if (!res.ok) throw new Error('Erreur lors de la prédiction');
+
+      const data = await res.json();
+
+      if (Array.isArray(data.predictions)) {
+        const predictionObj = data.predictions[0];
+        if (predictionObj && typeof predictionObj === 'object') {
+          setPrediction(predictionObj.label || '?');
+        } else {
+          setPrediction('?');
+        }
+      } else if (typeof data.label === 'string') {
+        setPrediction(data.label);
+      } else {
+        setPrediction('?');
+      }
+
 
     } catch (err: any) {
       alert(`${err.message}`);
     }
   };
 
-  const handlePredict = async () => {
-  if (!imageFile) return alert('Veuillez importer une image.');
+  const handleSaveModel = async () => {
+    if (!modelName.trim()) return alert('Please enter a model name');
+    try {
+      const res = await fetch('http://localhost:8000/model/save/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: modelName.trim() }),
+      });
 
-  try {
-    const pixels = await imageToFloatArray(imageFile);
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Unknown error');
+      }
 
-    if (pixels.length !== 64 * 64) {
-      return alert("l’image doit faire 64x64 (4096 pixels)");
+      alert('Model saved successfully.');
+      fetchModelList();
+    } catch (err: any) {
+      alert(`Error saving model: ${err.message}`);
     }
+  };
 
-    const input = { x: pixels };
-
-    let endpoint = '';
-    if (model === 'linear') {
-      endpoint = 'linear/predict/';
-    } else if (model === 'mlp') {
-      endpoint = 'mlp/predict/';
-    } else if (model === 'rbf') {
-      endpoint = 'rbfn/predict/';
-    } else if (model === 'svm') {
-      endpoint = 'svm/predict/';
-    } else {
-      return alert('modele non pris en charge pour la prédiction');
-    }
-
-    const res = await fetch(`http://localhost:8000/${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    });
-
-    if (!res.ok) throw new Error('Erreur lors de la prédiction');
-
-    const data = await res.json();
-
-    if ('label' in data) {
-      setPrediction(data.label);
-    } else if (Array.isArray(data.predictions)) {
-      setPrediction(data.predictions[0]);
-    } else {
-      setPrediction('?');
-    }
-
-
-  } catch (err: any) {
-    alert(`${err.message}`);
-  }
-};
-const handleSaveModel = async () => {
-  if (!modelName.trim()) return alert('Please enter a model name.');
-  try {
-    const res = await fetch('http://localhost:8000/model/save/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: modelName.trim() }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Unknown error');
-    }
-
-    alert('Model saved successfully.');
-    fetchModelList();
-  } catch (err: any) {
-    alert(`❌ Error saving model: ${err.message}`);
-  }
-};
 
   const handleLoadModel = async (name: string) => {
-    const res = await fetch('http://localhost:8000/model/load/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(name),
-    });
-    if (res.ok) {
-      alert(`Model "${name}" loaded.`);
-    } else {
-      alert('Error loading model.');
+    try {
+      const res = await fetch('http://localhost:8000/model/load/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, model_type: model }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Erreur inconnue');
+      }
+
+      const data = await res.json();
+      if (data.type) setModel(data.type);
+      setLoadedModelName(name);
+      alert(`Modèle "${name}" chargé avec succès`);
+    } catch (err: any) {
+      alert(`Erreur chargement modèle : ${err.message}`);
+    }
+  };
+
+  const handleImportModelFromFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const modelName = file.name;
+    setModelName(modelName);
+    try {
+      await handleLoadModel(modelName);
+    } catch (err: any) {
+      alert(`Erreur import modèle : ${err.message}`);
     }
   };
 
@@ -275,10 +351,11 @@ const handleSaveModel = async () => {
     fetchModelList();
   }, []);
 
+    
 
 
   return (
-    <div style={{ display: 'flex', height: '100vh' }}>
+    <div style={{ display: 'flex', height: '150vh' }}>
       {/* Sidebar */}
       <div style={{ width: '300px', background: '#f0f0f0', padding: '1rem' }}>
         <Typography variant="h6">🧠 Modele</Typography>
@@ -292,6 +369,7 @@ const handleSaveModel = async () => {
         >
           <MenuItem value="linear">Linear</MenuItem>
           <MenuItem value="mlp">MLP</MenuItem>
+          <MenuItem value="mlp_deep">MLP Deep</MenuItem>
           <MenuItem value="rbf">RBF</MenuItem>
           <MenuItem value="svm">SVM</MenuItem>
 
@@ -315,15 +393,76 @@ const handleSaveModel = async () => {
               />
             ))}
             <Button
-              variant="outlined"
-              onClick={handleAddLayer}
+                      variant="outlined"
+                      onClick={handleAddLayer}
+                      fullWidth
+                      sx={{ marginTop: '0.5rem' }}
+                    >
+                      Add layer
+                    </Button>
+                  </div>
+                )}
+        {model === "mlp_deep" && (
+        <>
+          <Typography variant="h6" sx={{ mt: 2 }}>⚙️ Configuration MLP Deep</Typography>
+
+          <TextField
+            fullWidth
+            label="Batch size"
+            type="number"
+            value={batchSize}
+            onChange={(e) => setBatchSize(parseInt(e.target.value))}
+            sx={{ mt: 2 }}
+          />
+
+          <TextField
+            fullWidth
+            label="Lambda L2"
+            type="number"
+            value={lambdaL2}
+            onChange={(e) => setLambdaL2(parseFloat(e.target.value))}
+            sx={{ mt: 2 }}
+          />
+
+          <Typography variant="subtitle1" sx={{ mt: 2 }}>🔢 Couches cachées</Typography>
+          {layers.map((layer, idx) => (
+            <TextField
+              key={idx}
               fullWidth
-              sx={{ marginTop: '0.5rem' }}
-            >
-              Add layer
-            </Button>
-          </div>
-        )}
+              label={`Neurones couche ${idx + 1}`}
+              type="number"
+              value={layer.neurons}
+              onChange={(e) => {
+                const updated = [...layers];
+                updated[idx].neurons = parseInt(e.target.value);
+                setLayers(updated);
+              }}
+              sx={{ mt: 1 }}
+            />
+          ))}
+
+          <Button
+            variant="outlined"
+            onClick={() => setLayers([...layers, { neurons: 64 }])}
+            sx={{ mt: 1 }}
+          >
+            ➕ Ajouter une couche
+          </Button>
+
+          <Typography variant="subtitle1" sx={{ mt: 2 }}>🔌 Fonction d’activation</Typography>
+          <Select
+            fullWidth
+            value={activationType}
+            onChange={(e) => setActivationType(Number(e.target.value))}
+            sx={{ mb: 2 }}
+          >
+            <MenuItem value={0}>ReLU</MenuItem>
+            <MenuItem value={1}>Tanh</MenuItem>
+          </Select>
+        </>
+      )}
+
+
 
         {model === 'linear' && (
           <>
@@ -339,15 +478,7 @@ const handleSaveModel = async () => {
               onChange={(e) => setLearningRate(parseFloat(e.target.value))}
               sx={{ marginBottom: '0.5rem' }}
             />
-            <TextField
-              label="Activation Type (0:Linear, 1:Tanh, 2:Sigmoid)"
-              type="number"
-              fullWidth
-              value={activationType}
-              inputProps={{ min: 0, max: 2 }}
-              onChange={(e) => setActivationType(parseInt(e.target.value))}
-              sx={{ marginBottom: '0.5rem' }}
-            />
+           
           </>
         )}
 
@@ -422,15 +553,30 @@ const handleSaveModel = async () => {
           inputProps={{ min: 1 }}
         />
 
-        <Button
-          variant="contained"
-          color="primary"
-          fullWidth
-          sx={{ marginTop: '1.5rem' }}
-          onClick={handleTrain}
-        >
-        Start training
-        </Button>
+      <Button
+      variant="contained"
+      fullWidth
+      sx={{
+        marginTop: '1.5rem',
+        backgroundColor: isTrained ? 'green' : undefined,
+        '&:hover': {
+          backgroundColor: isTrained ? '#2e7d32' : undefined,
+        },
+      }}
+      onClick={handleTrain}
+      disabled={isTraining}
+    >
+      {isTraining ? (
+        <>
+          <CircularProgress size={18} sx={{ color: 'white', marginRight: 1 }} />
+          Training...
+        </>
+      ) : isTrained ? (
+        'Model trained'
+      ) : (
+        'Start training'
+      )}
+    </Button>
 
 
         <Typography variant="h6" sx={{ marginTop: '2rem' }}>💾 Model Save / Load</Typography>
@@ -453,20 +599,40 @@ const handleSaveModel = async () => {
 </Button>
 
 <Typography variant="subtitle1">📂 Available Models</Typography>
-{availableModels.length === 0 && (
-  <Typography variant="body2">No models found.</Typography>
-)}
 {availableModels.map((name) => (
   <Button
     key={name}
-    variant="outlined"
+    variant={loadedModelName === name ? "contained" : "outlined"}
     fullWidth
-    sx={{ marginTop: '0.25rem' }}
+    sx={{
+      marginTop: '0.25rem',
+      backgroundColor: loadedModelName === name ? 'green' : undefined,
+      color: loadedModelName === name ? 'white' : undefined,
+      '&:hover': {
+        backgroundColor: loadedModelName === name ? '#2e7d32' : undefined,
+      },
+    }}
     onClick={() => handleLoadModel(name)}
   >
     📥 Load {name}
   </Button>
 ))}
+
+<Button
+  component="label"
+  variant="contained" 
+  fullWidth
+ sx={{ mt: 2, mb: 0.5 }} 
+>
+  📤 Load model from file
+  <input
+    type="file"
+    accept=".model"
+    hidden
+    onChange={handleImportModelFromFile}
+  />
+</Button>
+
       </div>
 
 
