@@ -1,20 +1,24 @@
 use nalgebra::{DMatrix, DVector};
-use crate::loss::mse;
+use serde::{Serialize, Deserialize};
 
+#[derive(PartialEq, Debug, Serialize, Deserialize)]
 pub enum RBFMode {
     Regression,
     BinaryClassification,
-    MultiClassification(usize), // usize = nombre de classes
+    MultiClassification(usize),
 }
-
+#[derive(Serialize, Deserialize)]
 pub struct RBFN {
     pub centers: Vec<Vec<f64>>,     // Chaque point devient un centre
-    pub sigma: f64,                 // écart type de la gaussienne
+    pub sigma: f64,                 // écart-type de la gaussienne
     pub weights: DMatrix<f64>,     // (n_hidden, n_outputs)
     pub learning_rate: f64,
     pub epochs: usize,
     pub mode: RBFMode,
-    pub loss_per_epoch: Vec<f32>, 
+    pub train_losses: Vec<f64>,
+    pub test_losses: Vec<f64>,
+    pub train_accuracies: Vec<f64>,
+    pub test_accuracies: Vec<f64>,
 }
 
 impl RBFN {
@@ -26,7 +30,10 @@ impl RBFN {
             learning_rate,
             epochs,
             mode,
-            loss_per_epoch: Vec::new(),
+            train_losses: Vec::new(),
+            test_losses: Vec::new(),
+            train_accuracies: Vec::new(),
+            test_accuracies: Vec::new(),
         }
     }
 
@@ -37,24 +44,22 @@ impl RBFN {
 
     fn compute_phi(&self, x: &Vec<Vec<f64>>) -> DMatrix<f64> {
         let n_samples = x.len();
-        let n_hidden = self.centers.len();
-        let mut data = Vec::with_capacity(n_samples * n_hidden);
+        let n_hidden = self.centers.len(); //(nombre de centres = nombre de neurones dans la couche RBF)
+        let mut data = Vec::with_capacity(n_samples * n_hidden);//Φ∈R (n_samples×n_hidden)  === vecteur pour contenir toutes les valeurs φ(x, c)
 
+        //Pour chaque exemple xi, on calcule son activation avec chaque centre cj via la fonction radiale gaussian.
         for xi in x {
             for cj in &self.centers {
                 data.push(self.gaussian(xi, cj));
             }
         }
 
+        //On transforme le vecteur data en une matrice dense Φ de dimension (n_samples × n_hidden).
         DMatrix::from_row_slice(n_samples, n_hidden, &data)
     }
 
-    /// Fit pour Régression ou Classification Binaire (apprentissage analytique)
     pub fn fit_closed_form(&mut self, x: &Vec<Vec<f64>>, y: &Vec<f64>) {
-        self.centers = x.clone(); // RBF Naïf : tous les points deviennent centres
-        let n_hidden = self.centers.len();
-        let n_outputs = 1;
-
+        self.centers = x.clone();
         let phi = self.compute_phi(x);
         let phi_t = phi.transpose();
         let phi_t_phi = &phi_t * &phi;
@@ -68,34 +73,87 @@ impl RBFN {
         }
     }
 
-    /// Fit pour Classification Multiclasse (descente de gradient)
-    pub fn fit_gradient_descent(&mut self, x: &Vec<Vec<f64>>, y: &Vec<Vec<f64>>) {
-        self.centers = x.clone(); // RBF Naïf
+    pub fn fit_rosenblatt_binary(&mut self, x: &Vec<Vec<f64>>, y: &Vec<f64>) {
+        assert_eq!(self.mode, RBFMode::BinaryClassification);
+        self.centers = x.clone();  // chaque point devient un centre RBF
+        let n_hidden = self.centers.len();
+        self.weights = DMatrix::zeros(n_hidden, 1);
+        // Calcul de la matrice Φ
+        let phi = self.compute_phi(x);
+
+        for _ in 0..self.epochs {
+            for (i, phi_row) in phi.row_iter().enumerate() {
+                let y_i = y[i];
+                let prediction = phi_row.dot(&self.weights.column(0));
+
+                if y_i * prediction <= 0.0 {
+                    let correction = phi_row * (self.learning_rate * y_i);
+                    let mut current_weights = self.weights.column_mut(0);
+                    current_weights += correction.transpose();
+                }
+            }
+        }
+    }
+
+    pub fn fit_gradient_descent(&mut self, x: &Vec<Vec<f64>>, y: &Vec<Vec<f64>>, x_test: &Vec<Vec<f64>>, y_test: &Vec<Vec<f64>>) {
+        self.centers = x.clone();
         let n_hidden = self.centers.len();
         let n_outputs = match self.mode {
             RBFMode::MultiClassification(k) => k,
-            _ => panic!("fit_gradient_descent ne doit etre utilisé que pour la classification multiclasse"),
+            _ => panic!("fit_gradient_descent ne doit être utilisé que pour la classification multiclasse"),
         };
 
         self.weights = DMatrix::zeros(n_hidden, n_outputs);
         let phi = self.compute_phi(x);
-        self.loss_per_epoch.clear();
+
         for _ in 0..self.epochs {
             let prediction = &phi * &self.weights;
-
             let y_flat: Vec<f64> = y.iter().flat_map(|v| v.iter()).copied().collect();
             let y_matrix = DMatrix::from_row_slice(x.len(), n_outputs, &y_flat);
-
             let error = &y_matrix - &prediction;
+
+            // Utilisation par emprunt (pas de move)
             let gradient = phi.transpose() * &error;
+
             self.weights += self.learning_rate * gradient / (x.len() as f64);
 
-            let predicted: Vec<f32> = prediction.iter().map(|&v| v as f32).collect();
-            let expected: Vec<f32> = y_flat.iter().map(|&v| v as f32).collect();
+            // Utilisation par move ensuite (ok maintenant)
+            let loss = error.map(|v| v.powi(2)).sum() / (x.len() as f64);
+            self.train_losses.push(loss);
 
-            if let Some(loss) = mse(&predicted, &expected) {
-                self.loss_per_epoch.push(loss);
+
+            // === Train accuracy ===
+            let mut correct = 0;
+            for (xi, yi) in x.iter().zip(y.iter()) {
+                let pred_label = self.predict_label(xi) as usize;
+                let true_label = yi.iter().position(|&v| v == 1.0).unwrap_or(usize::MAX);
+                if pred_label == true_label {
+                    correct += 1;
+                }
             }
+            self.train_accuracies.push(correct as f64 / x.len() as f64);
+
+            // === Test accuracy & loss ===
+            let mut correct_test = 0;
+            let mut test_loss = 0.0;
+            for (xi, yi) in x_test.iter().zip(y_test.iter()) {
+                let preds = self.predict(xi);
+                let true_label = yi.iter().position(|&v| v == 1.0).unwrap_or(usize::MAX);
+                let pred_label = preds
+                    .iter()
+                    .enumerate()
+                    .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                    .map(|(i, _)| i)
+                    .unwrap_or(usize::MAX);
+                if pred_label == true_label {
+                    correct_test += 1;
+                }
+                let pred_vec = DVector::from_vec(preds);
+                let true_vec = DVector::from_vec(yi.clone());
+                test_loss += (&true_vec - &pred_vec).map(|v| v.powi(2)).sum();
+            }
+            self.test_accuracies.push(correct_test as f64 / x_test.len() as f64);
+            self.test_losses.push(test_loss / x_test.len() as f64);
         }
     }
 
