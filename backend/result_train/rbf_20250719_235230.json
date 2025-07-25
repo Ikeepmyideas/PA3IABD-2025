@@ -1,0 +1,20 @@
+{
+  "model": "rbf",
+  "loss_per_epoch": [],
+  "labels": {
+    "A": 0,
+    "B": 1,
+    "C": 2
+  },
+  "config": {
+    "sigma": 1.0,
+    "learning_rate": 0.01,
+    "epochs": 10,
+    "labels_used": [
+      "A",
+      "B",
+      "C"
+    ]
+  },
+  "timestamp": "2025-07-19T23:52:30.824962"
+}

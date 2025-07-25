@@ -14,6 +14,9 @@ import shutil
 from fastapi.responses import Response
 import json
 from datetime import datetime
+from pydantic import BaseModel, Extra
+from typing import List
+from sklearn.preprocessing import StandardScaler
 
 MODEL_DIR = "saved_models"
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -23,7 +26,7 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
 DATASET_PATH = "../dataset"
-IMAGE_SIZE = (64, 64)
+IMAGE_SIZE = (32, 32)
 SUPPORTED_EXTENSIONS = [".png", ".jpg", ".jpeg"]
 
 app = FastAPI()
@@ -36,7 +39,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === Chargement de la bibliothèque Rust ===
+
 def load_library():
     system = platform.system()
     if system == "Windows":
@@ -55,22 +58,6 @@ def load_library():
 lib = load_library()
 
 
-lib.create_multiclass.restype = ctypes.c_void_p
-lib.train_multiclass.argtypes = [
-    ctypes.c_void_p,
-    ctypes.POINTER(ctypes.c_float),
-    ctypes.POINTER(ctypes.c_uint),
-    ctypes.c_size_t,
-    ctypes.c_size_t,
-    ctypes.c_bool
-]
-lib.predict_multiclass.argtypes = [
-    ctypes.c_void_p,
-    ctypes.POINTER(ctypes.c_float),
-    ctypes.c_size_t,
-    ctypes.c_size_t,
-    ctypes.POINTER(ctypes.c_uint)
-]
 
 lib.create_mlp_classifier.restype = ctypes.c_void_p
 lib.create_mlp_classifier.argtypes = [
@@ -94,25 +81,12 @@ lib.predict_mlp_classifier.argtypes = [
 ]
 lib.predict_mlp_classifier.restype = ctypes.c_uint
 
-lib.evaluate_mlp_classifier_mse.argtypes = [
-    ctypes.c_void_p,
-    ctypes.POINTER(ctypes.c_double),
-    ctypes.POINTER(ctypes.c_uint),
-    ctypes.c_size_t,
-    ctypes.c_size_t
-]
-lib.evaluate_mlp_classifier_mse.restype = ctypes.c_float
 
 lib.save_mlp_classifier.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
 lib.load_mlp_classifier.argtypes = [ctypes.c_char_p]
 lib.load_mlp_classifier.restype = ctypes.c_void_p
 
-lib.get_mlp_loss_pointer.argtypes = [ctypes.c_void_p]
-lib.get_mlp_loss_pointer.restype = ctypes.POINTER(ctypes.c_float)
 
-lib.get_mlp_loss_length.argtypes = [ctypes.c_void_p]
-lib.get_mlp_loss_length.restype = ctypes.c_size_t
-lib.evaluate_mlp_classifier_mse.restype = ctypes.c_float
 
 # === RBFN (multi-classe) ===
 lib.create_rbfn_multiclass_model.argtypes = [
@@ -131,6 +105,7 @@ lib.train_rbfn_model_auto.argtypes = [
     ctypes.c_size_t,
     ctypes.c_size_t,
 ]
+lib.train_rbfn_model_auto.restype = None
 
 lib.predict_rbfn_model.argtypes = [
     ctypes.c_void_p,
@@ -138,12 +113,6 @@ lib.predict_rbfn_model.argtypes = [
     ctypes.c_size_t,
 ]
 lib.predict_rbfn_model.restype = ctypes.c_double
-
-lib.get_rbfn_loss_pointer.argtypes = [ctypes.c_void_p]
-lib.get_rbfn_loss_pointer.restype = ctypes.POINTER(ctypes.c_float)
-
-lib.get_rbfn_loss_length.argtypes = [ctypes.c_void_p]
-lib.get_rbfn_loss_length.restype = ctypes.c_size_t
 
 
 lib.create_svm_rbf_multiclass.argtypes = [
@@ -168,29 +137,103 @@ lib.predict_svm_rbf_multiclass.restype = ctypes.c_size_t
 
 lib.destroy_svm_rbf_multiclass.argtypes = [ctypes.c_void_p]
 
-lib.get_svm_loss_pointer.restype = ctypes.POINTER(ctypes.c_double)
-lib.get_svm_loss_pointer.argtypes = [ctypes.c_void_p]
+lib.create_softmax_model.argtypes = [ctypes.c_size_t, ctypes.c_size_t, ctypes.c_double, ctypes.c_size_t, ctypes.c_double]
+lib.create_softmax_model.restype = ctypes.c_void_p
+lib.train_softmax_model.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_size_t), ctypes.c_size_t, ctypes.c_size_t]
+lib.predict_softmax_model.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_double), ctypes.c_size_t]
+lib.predict_softmax_model.restype = ctypes.c_size_t
 
-lib.get_svm_loss_length.restype = ctypes.c_size_t
-lib.get_svm_loss_length.argtypes = [ctypes.c_void_p]
+lib.save_rbfn_model.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+lib.save_rbfn_model.restype = None
+
+lib.load_rbfn_model.argtypes = [ctypes.c_char_p]
+lib.load_rbfn_model.restype = ctypes.c_void_p
+
+lib.get_deep_mlp_train_losses_ptr.argtypes = [ctypes.c_void_p]
+lib.get_deep_mlp_train_losses_ptr.restype = ctypes.POINTER(ctypes.c_double)
+
+lib.get_deep_mlp_train_losses_len.argtypes = [ctypes.c_void_p]
+lib.get_deep_mlp_train_losses_len.restype = ctypes.c_size_t
+
+lib.get_deep_mlp_test_losses_ptr.argtypes = [ctypes.c_void_p]
+lib.get_deep_mlp_test_losses_ptr.restype = ctypes.POINTER(ctypes.c_double)
+
+lib.get_deep_mlp_test_losses_len.argtypes = [ctypes.c_void_p]
+lib.get_deep_mlp_test_losses_len.restype = ctypes.c_size_t
+
+lib.get_deep_mlp_train_accuracies_ptr.argtypes = [ctypes.c_void_p]
+lib.get_deep_mlp_train_accuracies_ptr.restype = ctypes.POINTER(ctypes.c_double)
+
+lib.get_deep_mlp_train_accuracies_len.argtypes = [ctypes.c_void_p]
+lib.get_deep_mlp_train_accuracies_len.restype = ctypes.c_size_t
+
+lib.get_deep_mlp_test_accuracies_ptr.argtypes = [ctypes.c_void_p]
+lib.get_deep_mlp_test_accuracies_ptr.restype = ctypes.POINTER(ctypes.c_double)
+
+lib.get_deep_mlp_test_accuracies_len.argtypes = [ctypes.c_void_p]
+lib.get_deep_mlp_test_accuracies_len.restype = ctypes.c_size_t
+
+
+# === Deep MLP ===
+lib.create_deep_mlp_classifier.argtypes = [
+    ctypes.c_size_t,  # n_inputs
+    ctypes.c_size_t,  # hidden_units
+    ctypes.c_size_t,  # n_classes
+    ctypes.c_double,  # learning_rate
+    ctypes.c_size_t,  # epochs
+    ctypes.c_size_t,  # activation_id (0=ReLU, 1=Tanh)
+    ctypes.c_size_t,  # batch_size
+    ctypes.c_double,  # lambda
+    ctypes.c_size_t,  # nb_hidden_layers
+]
+lib.create_deep_mlp_classifier.restype = ctypes.c_void_p
+
+lib.train_deep_mlp_classifier.argtypes = [
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_double),
+    ctypes.POINTER(ctypes.c_size_t),
+    ctypes.c_size_t,
+    ctypes.POINTER(ctypes.c_double),
+    ctypes.POINTER(ctypes.c_size_t),
+    ctypes.c_size_t,
+    ctypes.c_size_t
+]
+lib.train_deep_mlp_classifier.restype = None
+
+lib.predict_deep_mlp_classifier.argtypes = [
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_double),
+    ctypes.c_size_t
+]
+lib.predict_deep_mlp_classifier.restype = ctypes.c_size_t
+
+class SoftmaxCreateInput(BaseModel):
+    n_features: int
+    n_classes: int
+    learning_rate: float
+    epochs: int
+    l2_lambda: float
 
 
 class CreateInput(BaseModel):
     n_features: int
+    n_classes: int
     learning_rate: float
     max_epochs: int
-    activation_type: int
-    n_classes: int
-
+    l2_lambda: float = 0.0
 #class DatasetRequest(BaseModel):
    # labels: List[str] = []
+
 class DatasetRequest(BaseModel):
-    labels: List[str] = []
-    learning_rate: float = 0.01
-    epochs: int = 50
-    activation_type: int = 2
-    sigma: float = 1.0
-    n_hidden: int = 8
+    labels: List[str]
+    learning_rate: float 
+    epochs: int 
+    activation_type: int 
+    sigma: float
+    n_hidden: int
+
+    class Config:
+        extra = Extra.allow  
 
 class PredictInput(BaseModel):
     x: List[List[float]]
@@ -212,12 +255,6 @@ class MLPClassifierCreateInput(BaseModel):
 
 class MLPInput(BaseModel):
     x: List[float]
-class MLPClassifierCreateInput(BaseModel):
-    n_inputs: int
-    n_hidden: int
-    n_classes: int
-    learning_rate: float
-    epochs: int
 
 class SVMTrainRequest(BaseModel):
     labels: List[str]
@@ -230,14 +267,35 @@ class SVMCreateRequest(BaseModel):
     c: float
     learning_rate: float
     epochs: int
-
+class MLPDeepCreateInput(BaseModel):
+    n_features: int
+    hidden_units: int
+    n_layers: int
+    n_classes: int
+    learning_rate: float
+    epochs: int
+    batch_size: int 
+    lambda_: float 
+    activation_type: int  # 0: ReLU, 1: Tanh
+class MLPDeepTrainInput(BaseModel):
+    n_classes: int
+    hidden_units: int
+    n_layers: int
+    activation_type: int
+    learning_rate: float
+    epochs: int
+    batch_size: int
+    lambda_: float
 
 model_ptr = None
 mlp_clf_ptr = None
 rbfn_ptr = None
 svm_ptr = None
+softmax_ptr = None
+mlp_deep_ptr = None
 
 label_to_index = {}
+scaler = None
 
 
 def load_full_dataset(base_path=DATASET_PATH, image_size=IMAGE_SIZE, filter_labels: List[str] = None):
@@ -254,7 +312,6 @@ def load_full_dataset(base_path=DATASET_PATH, image_size=IMAGE_SIZE, filter_labe
             label = label_dir.name
             if filter_labels and label not in filter_labels:
                 continue
-
             label_index = label_to_index.setdefault(label, len(label_to_index))
 
             for img_path in label_dir.glob("*"):
@@ -269,30 +326,83 @@ def load_full_dataset(base_path=DATASET_PATH, image_size=IMAGE_SIZE, filter_labe
                 except Exception as e:
                     print(f"Erreur avec {img_path}: {e}")
 
-        print(f"🔍 Split '{split}' - {len(X)} images chargées.")
         return X, y
 
     X_train, y_train = load_split("train")
     X_test, y_test = load_split("test")
-
-    print("🎯 Label mapping utilisé :", label_to_index)
-    print("📊 Répartition des y_train :", Counter(y_train))
     return X_train, y_train, X_test, y_test, label_to_index
 
 @app.post("/linear/create/")
-def create_linear_model(params: CreateInput):
-    global model_ptr
-    model_ptr = lib.create_multiclass(
-        params.n_classes,
+def create_softmax_model_api(params: CreateInput):
+    global softmax_ptr
+    softmax_ptr = lib.create_softmax_model(
         params.n_features,
-        ctypes.c_float(params.learning_rate),
+        params.n_classes,
+        ctypes.c_double(params.learning_rate),
         params.max_epochs,
-        params.activation_type
+        ctypes.c_double(params.l2_lambda)
     )
-    if not model_ptr:
-        raise HTTPException(status_code=500, detail="Erreur création modèle multiclasses.")
-    print("Modèle multiclasses créé")
+    if not softmax_ptr:
+        raise HTTPException(status_code=500, detail="Erreur création softmax.")
     return {"status": "created"}
+
+@app.post("/linear/train/")
+def train_softmax_model_api(req: DatasetRequest):
+    global softmax_ptr, label_to_index, scaler
+    if not softmax_ptr:
+        raise HTTPException(status_code=400, detail="Modèle non initialisé.")
+
+    X_train, y_train, _, _, label_map = load_full_dataset(filter_labels=req.labels)
+    if not X_train:
+        raise HTTPException(status_code=400, detail="Pas de données d'entraînement.")
+
+    x = np.array(X_train, dtype=np.float64)
+    y = np.array(y_train, dtype=np.uintp)
+
+    # Normalize like in original notebook
+    scaler = StandardScaler()
+    x = scaler.fit_transform(x)
+
+    lib.train_softmax_model(
+        softmax_ptr,
+        x.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        y.ctypes.data_as(ctypes.POINTER(ctypes.c_size_t)),
+        x.shape[0],
+        x.shape[1]
+    )
+
+    label_to_index = label_map
+    return {"status": "trained", "labels": label_map}
+
+@app.post("/linear/predict/")
+def predict_softmax_model_api(input: PredictInput):
+    global softmax_ptr, label_to_index, scaler
+    if not softmax_ptr:
+        raise HTTPException(status_code=400, detail="Modèle non initialisé.")
+
+    x_np = np.array(input.x, dtype=np.float64)
+    if scaler is not None:
+        x_np = scaler.transform(x_np)
+
+    if x_np.ndim != 2:
+        raise HTTPException(status_code=400, detail="Format attendu: liste de listes")
+
+    results = []
+    index_to_label = {v: k for k, v in label_to_index.items()}
+
+    for x in x_np:
+        pred_index = lib.predict_softmax_model(
+            softmax_ptr,
+            x.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+            len(x)
+        )
+        results.append({
+            "prediction_index": pred_index,
+            "label": index_to_label.get(pred_index, f"classe {pred_index}")
+        })
+
+    return {"predictions": results}
+
 @app.post("/mlp/create/")
 def create_mlp_classifier(params: MLPClassifierCreateInput):
     global mlp_clf_ptr
@@ -306,68 +416,6 @@ def create_mlp_classifier(params: MLPClassifierCreateInput):
     if not mlp_clf_ptr:
         raise HTTPException(status_code=500, detail="Erreur création MLPClassifier.")
     return {"status": "MLPClassifier created"}
-
-@app.post("/linear/train/")
-def train_multiclass_model_from_dataset(req: DatasetRequest):
-    global model_ptr, label_to_index
-    if not model_ptr:
-        raise HTTPException(status_code=400, detail="Modèle non initialisé.")
-
-    X_train, y_train, _, _, label_map = load_full_dataset(filter_labels=req.labels)
-    if not X_train:
-        raise HTTPException(status_code=400, detail="Pas de données d'entraînement.")
-
-    x = np.array(X_train, dtype=np.float32)
-    y = np.array(y_train, dtype=np.uint32)
-
-    print("Dimensions X_train:", x.shape)
-    print("Dimensions y_train:", y.shape)
-
-    lib.train_multiclass(
-        model_ptr,
-        x.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-        y.ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-        x.shape[0],
-        x.shape[1],
-        True
-    )
-
-    label_to_index = label_map
-    return {"status": "trained", "labels": label_map}
-
-@app.post("/linear/predict/")
-def predict_multiclass(data: PredictInput):
-    print("📥 Requête reçue :", data)
-    global model_ptr, label_to_index
-    if not model_ptr:
-        raise HTTPException(status_code=400, detail="Modèle non initialisé.")
-
-    x = np.array(data.x, dtype=np.float32)
-
-    if x.ndim != 2:
-        raise HTTPException(status_code=400, detail="Format attendu: liste de listes.")
-    
-    n_samples, n_features = x.shape
-    if n_features != 64 * 64:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Chaque échantillon doit avoir {64*64} features (actuellement {n_features})"
-        )
-
-    out = np.zeros(n_samples, dtype=np.uint32)
-
-    lib.predict_multiclass(
-        model_ptr,
-        x.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-        n_samples,
-        n_features,
-        out.ctypes.data_as(ctypes.POINTER(ctypes.c_uint))
-    )
-
-    index_to_label = {v: k for k, v in label_to_index.items()}
-    label_preds = [index_to_label.get(p, "?") for p in out]
-
-    return {"predictions": label_preds}
 
 @app.post("/mlp/train/")
 def train_mlp_classifier(req: DatasetRequest):
@@ -395,29 +443,13 @@ def train_mlp_classifier(req: DatasetRequest):
         x.shape[1]
     )
 
-    # Obtenir la perte globale
-    loss = lib.evaluate_mlp_classifier_mse(
-        mlp_clf_ptr,
-        x.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
-        y.ctypes.data_as(ctypes.POINTER(ctypes.c_uint)),
-        x.shape[0],
-        x.shape[1]
-    )
-
-    # Obtenir les pertes par époque depuis Rust
-    length = lib.get_mlp_loss_length(mlp_clf_ptr)
-    loss_ptr = lib.get_mlp_loss_pointer(mlp_clf_ptr)
-    loss_array = np.ctypeslib.as_array(loss_ptr, shape=(length,))
-    loss_per_epoch = loss_array.tolist()
-
     label_to_index = label_map
     run_id = f"mlp_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     save_path = os.path.join(RESULTS_DIR, run_id)
 
     log_data = {
         "model": "mlp",
-        "loss_per_epoch": loss_per_epoch,
-        "mse_loss": float(loss),
+       
         "labels": label_map,
         "config": {
             "learning_rate": req.learning_rate,
@@ -435,8 +467,7 @@ def train_mlp_classifier(req: DatasetRequest):
     return {
         "status": "trained",
         "labels": label_map,
-        "mse_loss": float(loss),
-        "loss_per_epoch": loss_per_epoch
+      
     }
 
 
@@ -459,16 +490,7 @@ def predict_mlp_classifier(input: MLPInput):
     label = index_to_label.get(pred_index, f"classe {pred_index}")
     return {"prediction_index": pred_index, "label": label}
 
-@app.post("/model/save/")
-def save_current_model(name: str):
-    global mlp_clf_ptr
-    if not mlp_clf_ptr:
-        raise HTTPException(status_code=400, detail="Aucun modèle à sauvegarder.")
 
-    path = os.path.join(MODEL_DIR, f"{name}.bin")
-    lib.save_mlp_classifier(mlp_clf_ptr, path.encode("utf-8"))
-
-    return {"status": "saved", "filename": f"{name}.bin"}
 
 @app.get("/dataset/stats/")
 def get_dataset_stats():
@@ -503,6 +525,7 @@ def create_rbf_model(sigma: float = 1.0, learning_rate: float = 0.01, epochs: in
     if not rbfn_ptr:
         raise HTTPException(status_code=500, detail="Erreur création RBF.")
     return {"status": "RBF model created"}
+
 @app.post("/rbf/train/")
 def train_rbf_model(req: DatasetRequest):
     global rbfn_ptr, label_to_index
@@ -530,28 +553,24 @@ def train_rbf_model(req: DatasetRequest):
         y.shape[1]
     )
 
-    length = lib.get_rbfn_loss_length(rbfn_ptr)
-    loss_ptr = lib.get_rbfn_loss_pointer(rbfn_ptr)
-    loss_array = np.ctypeslib.as_array(loss_ptr, shape=(length,))
-    loss_per_epoch = loss_array.tolist()
 
     label_to_index = label_map
-
     run_id = f"rbf_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     save_path = os.path.join(RESULTS_DIR, run_id)
 
     log_data = {
         "model": "rbf",
-        "loss_per_epoch": loss_per_epoch,
         "labels": label_map,
         "config": {
-            "sigma": sigma,
-            "learning_rate": learning_rate,
-            "epochs": epochs,
+            "sigma": req.sigma,
+            "learning_rate": req.learning_rate,
+            "epochs": req.epochs,
             "labels_used": req.labels,
         },
         "timestamp": datetime.now().isoformat()
     }
+
+
 
     with open(save_path, "w") as f:
         json.dump(log_data, f, indent=2)
@@ -560,9 +579,7 @@ def train_rbf_model(req: DatasetRequest):
     return {
         "status": "trained",
         "labels": label_map,
-        "loss_per_epoch": loss_per_epoch
     }
-
 
 @app.post("/rbfn/predict/")
 def predict_rbf_model(input: MLPInput): 
@@ -570,16 +587,26 @@ def predict_rbf_model(input: MLPInput):
     if not rbfn_ptr:
         raise HTTPException(status_code=400, detail="Modèle RBF non initialisé.")
 
+    if len(input.x) != 32 * 32:
+        raise HTTPException(status_code=400, detail=f"Image incorrecte. Attendu: 64x64 ({32*32} valeurs)")
+
     x_np = np.array(input.x, dtype=np.float64)
-    pred_index = int(lib.predict_rbfn_model(
+
+    pred_raw = lib.predict_rbfn_model(
         rbfn_ptr,
         x_np.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
         len(input.x)
-    ))
+    )
+
+    pred_index = max(0, int(round(pred_raw)))
 
     index_to_label = {v: k for k, v in label_to_index.items()}
     label = index_to_label.get(pred_index, f"classe {pred_index}")
-    return {"prediction_index": pred_index, "label": label}
+
+    return {
+        "prediction_index": pred_index,
+        "label": label
+    }
 
 @app.post("/svm/create/")
 def create_svm_model(params: SVMCreateRequest):
@@ -593,19 +620,19 @@ def create_svm_model(params: SVMCreateRequest):
     if not svm_ptr:
         raise HTTPException(status_code=500, detail="Erreur création SVM.")
     return {"status": "SVM créé"}
+
 @app.post("/svm/train/")
 def train_svm_model(req: SVMTrainRequest):
     global svm_ptr, label_to_index
     if not svm_ptr:
         raise HTTPException(status_code=400, detail="Modèle SVM non initialisé.")
 
-    # Charger le dataset filtré
     X_train, y_train, _, _, label_map = load_full_dataset(filter_labels=req.labels)
     if not X_train:
         raise HTTPException(status_code=400, detail="Dataset vide ou invalide.")
 
     x = np.array(X_train, dtype=np.float64)
-    y = np.array(y_train, dtype=np.uintp)  # ctypes.c_size_t compatible
+    y = np.array(y_train, dtype=np.uintp) 
 
     print("⏳ Début appel Rust SVM...")
     start = datetime.now()
@@ -620,11 +647,6 @@ def train_svm_model(req: SVMTrainRequest):
 
     print("Fin appel Rust SVM", datetime.now() - start)
 
-    loss_length = lib.get_svm_loss_length(svm_ptr)
-    loss_ptr = lib.get_svm_loss_pointer(svm_ptr)
-    loss_array = np.ctypeslib.as_array(loss_ptr, shape=(loss_length,))
-    loss_per_epoch = loss_array.tolist()
-
     label_to_index = label_map
 
     run_id = f"svm_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -632,7 +654,6 @@ def train_svm_model(req: SVMTrainRequest):
 
     log_data = {
         "model": "svm",
-        "loss_per_epoch": loss_per_epoch,
         "labels": label_map,
         "config": {
             "gamma": req.gamma,
@@ -650,8 +671,8 @@ def train_svm_model(req: SVMTrainRequest):
     return {
         "status": "trained",
         "labels": label_map,
-        "loss_per_epoch": loss_per_epoch
     }
+
 
 
 @app.post("/svm/predict/")
@@ -666,6 +687,233 @@ def predict_svm_model(input: MLPInput):
         x_np.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
         len(input.x)
     ))
+
+    index_to_label = {v: k for k, v in label_to_index.items()}
+    label = index_to_label.get(pred_index, f"classe {pred_index}")
+    return {"prediction_index": pred_index, "label": label}
+
+class ModelName(BaseModel):
+    name: str
+    model_type: str 
+
+@app.post("/model/save/")
+def save_current_model(data: ModelName):
+    global mlp_clf_ptr, softmax_ptr, rbfn_ptr, svm_ptr
+
+    name = data.name
+    if not name.endswith(".model"):
+        name += ".model"
+
+    path = os.path.join(MODEL_DIR, name)
+
+    if mlp_clf_ptr:
+        lib.save_mlp_classifier(mlp_clf_ptr, path.encode("utf-8"))
+        model_type = "mlp"
+
+    elif softmax_ptr:
+        if not hasattr(lib, "save_softmax_model"):
+            raise HTTPException(status_code=501, detail="Fonction Rust 'save_softmax_model' manquante.")
+        lib.save_softmax_model(softmax_ptr, path.encode("utf-8"))
+        model_type = "softmax"
+
+    elif rbfn_ptr:
+        if not hasattr(lib, "save_rbfn_model"):
+            raise HTTPException(status_code=501, detail="Fonction Rust 'save_rbfn_model' manquante.")
+        lib.save_rbfn_model(rbfn_ptr, path.encode("utf-8"))
+        model_type = "rbf"
+
+    elif svm_ptr:
+        if not hasattr(lib, "save_svm_model"):
+            raise HTTPException(status_code=501, detail="Fonction Rust 'save_svm_model' manquante.")
+        lib.save_svm_model(svm_ptr, path.encode("utf-8"))
+        model_type = "svm"
+
+    else:
+        raise HTTPException(status_code=400, detail="Aucun modèle à sauvegarder.")
+
+    return {"status": "saved", "filename": name, "model_type": model_type}
+
+class ModelLoadRequest(BaseModel):
+    name: str
+    model_type: str
+
+
+@app.post("/model/load/")
+def load_model(req: ModelLoadRequest):
+    global svm_ptr, mlp_clf_ptr, rbfn_ptr, softmax_ptr
+
+    filename = req.name if req.name.endswith(".model") else f"{req.name}.model"
+    path = os.path.join(MODEL_DIR, filename)
+
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Modèle introuvable")
+
+    model_type = req.model_type.lower().strip()
+    name_lower = filename.lower()
+    if not model_type:
+        if "svm" in name_lower:
+            model_type = "svm"
+        elif "mlp" in name_lower:
+            model_type = "mlp"
+        elif "rbf" in name_lower:
+            model_type = "rbf"
+        elif "linear" in name_lower or "softmax" in name_lower:
+            model_type = "linear"
+        else:
+            raise HTTPException(status_code=400, detail="Impossible de déterminer le type de modèle à partir du nom")
+
+    if model_type == "svm":
+        if not hasattr(lib, "load_svm_model"):
+            raise HTTPException(status_code=501, detail="load_svm_model non défini dans la lib Rust")
+        svm_ptr = lib.load_svm_model(path.encode("utf-8"))
+        if not svm_ptr:
+            raise HTTPException(status_code=500, detail="Échec du chargement SVM")
+        return {"status": "ok", "type": "svm"}
+
+    elif model_type == "mlp":
+        if not hasattr(lib, "load_mlp_classifier"):
+            raise HTTPException(status_code=501, detail="load_mlp_classifier non défini dans la lib Rust")
+        mlp_clf_ptr = lib.load_mlp_classifier(path.encode("utf-8"))
+        if not mlp_clf_ptr:
+            raise HTTPException(status_code=500, detail="Échec du chargement MLP")
+        return {"status": "ok", "type": "mlp"}
+
+    elif model_type == "linear":
+        if not hasattr(lib, "load_softmax_model"):
+            raise HTTPException(status_code=501, detail="load_softmax_model non défini dans la lib Rust")
+        softmax_ptr = lib.load_softmax_model(path.encode("utf-8"))
+        if not softmax_ptr:
+            raise HTTPException(status_code=500, detail="Échec du chargement Softmax")
+        return {"status": "ok", "type": "linear"}
+
+    elif model_type == "rbf":
+        if not hasattr(lib, "load_rbfn_model"):
+            raise HTTPException(status_code=501, detail="load_rbfn_model non défini dans la lib Rust")
+        rbfn_ptr = lib.load_rbfn_model(path.encode("utf-8"))
+        if not rbfn_ptr:
+            raise HTTPException(status_code=500, detail="Échec du chargement RBF")
+        return {"status": "ok", "type": "rbf"}
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Type de modèle non pris en charge: {model_type}")
+
+@app.get("/model/list/")
+def list_models():
+    if not os.path.exists(MODEL_DIR):
+        return {"models": []}
+    return {
+        "models": [f for f in os.listdir(MODEL_DIR) if f.endswith(".model")]
+    }
+@app.post("/mlp_deep/create/")
+def create_mlp_deep_classifier(params: MLPDeepCreateInput):
+    global mlp_deep_ptr
+
+    if params.hidden_units <= 0 or params.n_layers <= 0:
+        raise HTTPException(status_code=400, detail="hidden_units ou n_layers invalide")
+
+    mlp_deep_ptr = lib.create_deep_mlp_classifier(
+        params.n_features,
+        params.hidden_units,
+        params.n_classes,
+        ctypes.c_double(params.learning_rate),
+        params.epochs,
+        params.activation_type,
+        params.batch_size,
+        ctypes.c_double(params.lambda_),
+        params.n_layers
+    )
+
+    if not mlp_deep_ptr:
+        raise HTTPException(status_code=500, detail="Erreur création MLP Deep")
+
+    return {"status": "mlp_deep created"}
+
+
+@app.post("/mlp_deep/train/")
+def train_mlp_deep_classifier(req: MLPDeepTrainInput):
+    print(req)
+
+    global mlp_deep_ptr, label_to_index
+    if not mlp_deep_ptr:
+        raise HTTPException(status_code=400, detail="Modèle MLPDeep non initialisé")
+
+    # Chargement des données
+    X_train, y_train, X_test, y_test, label_map = load_full_dataset()
+    if not X_train:
+        raise HTTPException(status_code=400, detail="Données d'entraînement introuvables")
+
+    x_train = np.array(X_train, dtype=np.float64)
+    y_train = np.array(y_train, dtype=np.uint32)
+    x_test = np.array(X_test, dtype=np.float64)
+    y_test = np.array(y_test, dtype=np.uint32)
+
+    # Entraînement du modèle
+    lib.train_deep_mlp_classifier(
+        mlp_deep_ptr,
+        x_train.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        y_train.ctypes.data_as(ctypes.POINTER(ctypes.c_size_t)),
+        len(X_train),
+        x_test.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        y_test.ctypes.data_as(ctypes.POINTER(ctypes.c_size_t)),
+        len(X_test),
+        x_train.shape[1]
+    )
+
+    # Récupération des courbes
+    def get_array(ptr_func, len_func):
+        ptr = ptr_func(mlp_deep_ptr)
+        length = len_func(mlp_deep_ptr)
+        return [ptr[i] for i in range(length)] if ptr and length > 0 else []
+
+    train_losses = get_array(lib.get_deep_mlp_train_losses_ptr, lib.get_deep_mlp_train_losses_len)
+    test_losses = get_array(lib.get_deep_mlp_test_losses_ptr, lib.get_deep_mlp_test_losses_len)
+    train_accuracies = get_array(lib.get_deep_mlp_train_accuracies_ptr, lib.get_deep_mlp_train_accuracies_len)
+    test_accuracies = get_array(lib.get_deep_mlp_test_accuracies_ptr, lib.get_deep_mlp_test_accuracies_len)
+
+    # Sauvegarde des paramètres
+    label_to_index = label_map
+    run_id = f"mlpdeep_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    save_path = os.path.join(RESULTS_DIR, run_id)
+
+    log_data = {
+        "model": "mlp_deep",
+        "labels": label_map,
+        "config": {
+            "learning_rate": req.learning_rate,
+            "epochs": req.epochs,
+            "activation": req.activation_type,
+            "n_layers": req.n_layers,
+            "batch_size": req.batch_size,
+            "lambda": req.lambda_,
+            "labels_used": "all",
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+    with open(save_path, "w") as f:
+        json.dump(log_data, f, indent=2)
+
+    return {
+        "status": "trained",
+        "labels": label_map,
+        "loss_train": train_losses,
+        "loss_test": test_losses,
+        "acc_train": train_accuracies,
+        "acc_test": test_accuracies,
+    }
+
+@app.post("/mlp_deep/predict/")
+def predict_mlp_deep(input: MLPInput):
+    global mlp_deep_ptr, label_to_index
+    if not mlp_deep_ptr:
+        raise HTTPException(status_code=400, detail="Modèle MLPDeep non initialisé")
+
+    x_np = np.array(input.x, dtype=np.float64)
+    pred_index = lib.predict_deep_mlp_classifier(
+        mlp_deep_ptr,
+        x_np.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        len(input.x)
+    )
 
     index_to_label = {v: k for k, v in label_to_index.items()}
     label = index_to_label.get(pred_index, f"classe {pred_index}")
